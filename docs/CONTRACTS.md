@@ -81,6 +81,7 @@ Padrão de resposta: recurso direto; listas `{ data, total, page, pageSize }`. E
 - `GET/POST/PATCH /channels` (credenciais só na criação/edição; nunca retornadas), `POST /channels/:id/test`
 - `GET/POST/DELETE /knowledge`, status de ingestão via GET
 - `GET /dashboard/metrics` (contadores: abertas, por etapa, por agente, tempo médio resposta)
+- **Health público (sem JWT, isento de rate limit, FORA do prefixo `/v1`)**: `GET /api/health` → `{ status: 'ok'|'degraded', db: 'up'|'down', redis: 'up'|'down' }` — sempre HTTP 200; usado pelo healthcheck do Docker (infra/docker-compose.yml) e pelo deploy.sh
 - **Webhooks públicos (sem JWT)**: `GET /api/webhooks/meta` (hub.challenge verify), `POST /api/webhooks/meta` (**validar `X-Hub-Signature-256` HMAC SHA-256 com META_APP_SECRET sobre o raw body**; 200 sempre; enfileirar)
 - **Webchat público**: `POST /api/webchat/session {orgSlug}` → `{visitorToken, conversationId}`; `POST /api/webchat/messages`; `GET /api/webchat/messages?after=`; socket namespace `/webchat` com visitorToken
 
@@ -110,11 +111,21 @@ NEXT_PUBLIC_API_URL=/api/v1  NEXT_PUBLIC_SOCKET_PATH=/socket.io
 - JWT payload: `{ sub: userId, orgId, role }`. RBAC via decorator `@Roles()` + guard.
 - **Prisma Client Extension** com AsyncLocalStorage: toda query de modelos tenant recebe `where { orgId }` injetado automaticamente; criação injeta `orgId`. Bypass explícito só em código de webhook/system com `prismaSystem`.
 - Credenciais de canal: AES-256-GCM (`APP_ENCRYPTION_KEY`), IV aleatório por registro, nunca logadas nem retornadas em API.
-- Rate limit no gateway (`@nestjs/throttler`): auth 5/min, webhooks isentos, demais 120/min.
+- Rate limit no gateway (`@nestjs/throttler`): auth 5/min, webhooks e `GET /api/health` isentos, demais 120/min.
 - Senhas: argon2id. Headers: helmet. CORS: PUBLIC_URL apenas.
 - Validação: class-validator em TODOS os DTOs, `whitelist: true, forbidNonWhitelisted: true`.
 
 ## 10. Convenções de código
 - TS strict. ESLint + Prettier padrão de cada framework. Sem `any` gratuito.
-- Tipos compartilhados (eventos socket, enums espelhados, DTOs de API) em `@sm/shared` — web importa de lá; api pode duplicar via Prisma types mas eventos socket usam @sm/shared.
+- Tipos compartilhados (eventos socket, enums espelhados, DTOs de API) em `@sm/shared` — **web importa de lá**; **api NÃO importa @sm/shared** (evita fricção de build tsc do Nest): usa tipos do Prisma e replica os NOMES DE EVENTOS exatamente como definidos em `packages/shared/src/socket.ts`.
 - Commits convencionais (`feat:`, `fix:`, `chore:`).
+
+## 11. Mapeamento do banco (obrigatório — Python faz SQL direto nas tabelas)
+Todos os models Prisma DEVEM usar `@@map` para tabelas **snake_case plural** e `@map` para
+colunas **snake_case**: `organizations`, `users`, `channels`, `contacts`, `contact_identities`,
+`pipeline_stages`, `conversations`, `messages`, `tags`, `conversation_tags`, `automations`,
+`automation_runs`, `knowledge_sources`, `knowledge_chunks`, `refresh_tokens`, `audit_logs`,
+`webhook_event_logs`. Ex.: `orgId` → `org_id`, `createdAt` → `created_at`.
+`knowledge_chunks`: colunas `id, org_id, source_id, content, embedding vector(1536), created_at`
+com índice HNSW `vector_cosine_ops`. O serviço de IA lê/escreve `knowledge_sources.status/chunk_count`
+e `knowledge_chunks` diretamente via SQL usando exatamente esses nomes.

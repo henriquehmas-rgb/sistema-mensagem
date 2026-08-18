@@ -32,6 +32,15 @@ Canais: WhatsApp Cloud API (Meta), Instagram Direct, Webchat embutível.
 
 Detalhes de nomes/rotas/filas/eventos: **docs/CONTRACTS.md** (obrigatório para todo módulo).
 
+## Limitações conhecidas (corte de escopo auditável)
+- **Instagram Direct**: recebimento (webhook `object: instagram`, formato Messenger) e envio
+  via Graph API ainda não implementados. Webhooks IG são registrados em `webhook_event_logs`
+  com status `ignored`; envio OUTBOUND em canal INSTAGRAM se comporta como dev/demo (marca
+  SENT sem entrega real). WhatsApp e Webchat estão completos (inbound + outbound + status).
+- **Mídia inbound (WhatsApp)**: a URL de mídia da Meta expira em minutos e exige download
+  autenticado + re-host. Mensagens de mídia armazenam `content.mediaId`/`mimeType` (não
+  `mediaUrl`); a resolução/re-host de mídia é etapa futura.
+
 ## Deploy
 - VPS `/docker/sistema-mensagem/` via git clone + `docker compose up -d --build`.
 - Traefik global já existente (rede `traefik`), wildcard `*.srv1450678.hstgr.cloud`.

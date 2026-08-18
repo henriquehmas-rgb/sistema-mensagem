@@ -1,0 +1,6 @@
+# Scripts e arquivos de infra precisam de LF no Linux da VPS
+*.sh text eol=lf
+*.Dockerfile text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

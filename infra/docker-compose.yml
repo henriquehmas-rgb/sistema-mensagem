@@ -1,0 +1,150 @@
+# =============================================================================
+# docker-compose.yml — PRODUÇÃO (VPS Ubuntu 24 + Traefik global já existente)
+# Rodar da raiz do repo:
+#   docker compose -f infra/docker-compose.yml --env-file .env up -d --build
+# - Traefik: rede externa 'traefik', wildcard *.srv1450678.hstgr.cloud, HTTPS
+#   automático. Somente api e web entram na rede 'traefik'.
+# - postgres / redis / ai: SOMENTE rede 'internal' — sem portas no host.
+# =============================================================================
+name: sistema-mensagem
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sm}
+      POSTGRES_DB: ${POSTGRES_DB:-sm}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - internal
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - internal
+
+  api:
+    build:
+      context: ..
+      dockerfile: infra/docker/api.Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - internal
+      - traefik
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:4000/api/health']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.docker.network=traefik'
+      - 'traefik.http.routers.smapi.rule=Host(`chat.srv1450678.hstgr.cloud`) && (PathPrefix(`/api`) || PathPrefix(`/socket.io`))'
+      - 'traefik.http.routers.smapi.priority=20'
+      # entrypoint conforme o Traefik global da VPS. Verifique o nome real com
+      # `docker inspect traefik | grep -i entrypoint` — se lá for 'https'/'web-secure',
+      # ajuste as duas linhas de entrypoints (smapi e smweb); router com entrypoint
+      # inexistente não casa e o sintoma é 404 silencioso.
+      - 'traefik.http.routers.smapi.entrypoints=websecure'
+      # certresolver conforme o Traefik global da VPS. Se o resolver de lá tiver
+      # outro nome (ex.: 'mytlschallenge' ou 'le'), troque a linha ativa abaixo.
+      - 'traefik.http.routers.smapi.tls.certresolver=letsencrypt'
+      # - 'traefik.http.routers.smapi.tls.certresolver=mytlschallenge'
+      - 'traefik.http.services.smapi.loadbalancer.server.port=4000'
+
+  web:
+    build:
+      context: ..
+      dockerfile: infra/docker/web.Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
+        NEXT_PUBLIC_SOCKET_PATH: ${NEXT_PUBLIC_SOCKET_PATH:-/socket.io}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - internal
+      - traefik
+    # node:24-slim não tem wget/curl — healthcheck via fetch nativo do Node.
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3000').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.docker.network=traefik'
+      - 'traefik.http.routers.smweb.rule=Host(`chat.srv1450678.hstgr.cloud`)'
+      - 'traefik.http.routers.smweb.priority=10'
+      # mesmo entrypoint do router smapi — ajuste junto se necessário.
+      - 'traefik.http.routers.smweb.entrypoints=websecure'
+      # mesmo certresolver do router smapi — ajuste junto se necessário.
+      - 'traefik.http.routers.smweb.tls.certresolver=letsencrypt'
+      # - 'traefik.http.routers.smweb.tls.certresolver=mytlschallenge'
+      - 'traefik.http.services.smweb.loadbalancer.server.port=3000'
+
+  ai:
+    build:
+      context: ..
+      dockerfile: infra/docker/ai.Dockerfile
+    restart: unless-stopped
+    # Whitelist mínima (least privilege) — NUNCA passar o .env inteiro aqui:
+    # o serviço de IA processa conteúdo hostil (PDFs/URLs de clientes) e não
+    # deve ter acesso a JWT_SECRET/APP_ENCRYPTION_KEY/META_APP_SECRET.
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
+      AI_PROVIDER: ${AI_PROVIDER:-mock}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+    healthcheck:
+      test: ['CMD', 'python', '-c', "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+networks:
+  internal:
+    driver: bridge
+  traefik:
+    external: true
+
+volumes:
+  pg_data:
+  redis_data:

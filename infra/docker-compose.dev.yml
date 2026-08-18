@@ -1,0 +1,48 @@
+# =============================================================================
+# docker-compose.dev.yml — DEV LOCAL: apenas postgres + redis com portas no host
+#   docker compose -f infra/docker-compose.dev.yml up -d
+# Para apps rodando fora do Docker, use no .env local:
+#   DATABASE_URL=postgresql://sm:sm@localhost:5432/sm
+#   REDIS_URL=redis://localhost:6379
+# =============================================================================
+name: sistema-mensagem-dev
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    ports:
+      # loopback apenas — postgres de dev (sm/sm) não deve ficar acessível na LAN
+      - '127.0.0.1:5432:5432'
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sm}
+      POSTGRES_DB: ${POSTGRES_DB:-sm}
+    volumes:
+      - pg_data_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      # loopback apenas — redis de dev sem senha não deve ficar acessível na LAN
+      - '127.0.0.1:6379:6379'
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redis_data_dev:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  pg_data_dev:
+  redis_data_dev:

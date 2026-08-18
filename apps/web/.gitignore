@@ -1,0 +1,13 @@
+# deps
+node_modules/
+
+# next
+.next/
+out/
+next-env.d.ts.timestamp*
+
+# misc
+*.tsbuildinfo
+.env
+.env.local
+.env.*.local

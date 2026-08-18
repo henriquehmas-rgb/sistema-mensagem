@@ -1,0 +1,44 @@
+# Contexto de build = raiz do monorepo — manter o contexto enxuto e sem segredos
+.git
+.gitattributes
+
+# segredos — NUNCA entram em imagem
+# (padrões sem `**/` só casam na raiz do contexto; os `**/` cobrem subdiretórios
+#  como apps/web/.env.local e services/ai/.env)
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+**/*.pem
+**/*.key
+credentials*.json
+**/credentials*.json
+
+# dependências / builds locais
+**/node_modules
+**/dist
+**/.next
+**/out
+**/build
+**/.turbo
+**/*.tsbuildinfo
+.pnpm-store
+
+# python
+**/__pycache__
+**/*.pyc
+**/.venv
+**/venv
+
+# misc
+**/coverage
+**/*.log
+**/.DS_Store
+**/Thumbs.db
+uploads
+storage
+docs

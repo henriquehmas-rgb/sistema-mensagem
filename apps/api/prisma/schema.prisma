@@ -1,0 +1,415 @@
+// SEEG Omni — schema Prisma
+// Fonte da verdade: docs/CONTRACTS.md §3 (entidades) e §11 (mapeamento snake_case).
+// O serviço de IA (FastAPI) faz SQL direto nas tabelas — NÃO renomear @@map/@map.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================== Enums ==============================
+
+enum Role {
+  ADMIN
+  SUPERVISOR
+  AGENT
+}
+
+enum ChannelType {
+  WHATSAPP
+  INSTAGRAM
+  WEBCHAT
+}
+
+enum ChannelStatus {
+  ACTIVE
+  DISABLED
+  ERROR
+}
+
+enum ConversationStatus {
+  OPEN
+  PENDING
+  RESOLVED
+  SNOOZED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  AUDIO
+  VIDEO
+  DOCUMENT
+  STICKER
+  LOCATION
+  TEMPLATE
+  SYSTEM
+}
+
+enum MessageStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum SourceType {
+  PDF
+  URL
+  TEXT
+  TABLE
+}
+
+enum IngestStatus {
+  PENDING
+  PROCESSING
+  READY
+  FAILED
+}
+
+enum RunStatus {
+  SUCCESS
+  FAILED
+  SKIPPED
+}
+
+// ============================== Models ==============================
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  plan      String   @default("free")
+  settings  Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  users             User[]
+  channels          Channel[]
+  contacts          Contact[]
+  contactIdentities ContactIdentity[]
+  pipelineStages    PipelineStage[]
+  conversations     Conversation[]
+  messages          Message[]
+  tags              Tag[]
+  automations       Automation[]
+  automationRuns    AutomationRun[]
+  knowledgeSources  KnowledgeSource[]
+  knowledgeChunks   KnowledgeChunk[]
+  auditLogs         AuditLog[]
+  webhookEventLogs  WebhookEventLog[]
+
+  @@map("organizations")
+}
+
+model User {
+  id           String    @id @default(cuid())
+  orgId        String    @map("org_id")
+  name         String
+  email        String
+  passwordHash String    @map("password_hash")
+  role         Role      @default(AGENT)
+  avatarUrl    String?   @map("avatar_url")
+  isActive     Boolean   @default(true) @map("is_active")
+  lastSeenAt   DateTime? @map("last_seen_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  org                   Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  refreshTokens         RefreshToken[]
+  assignedConversations Conversation[] @relation("ConversationAssignee")
+  authoredMessages      Message[]      @relation("MessageAuthor")
+  auditLogs             AuditLog[]
+
+  @@unique([orgId, email])
+  @@map("users")
+}
+
+model Channel {
+  id                   String        @id @default(cuid())
+  orgId                String        @map("org_id")
+  type                 ChannelType
+  name                 String
+  status               ChannelStatus @default(ACTIVE)
+  config               Json          @default("{}")
+  encryptedCredentials String        @map("encrypted_credentials")
+  externalId           String?       @map("external_id")
+  createdAt            DateTime      @default(now()) @map("created_at")
+  updatedAt            DateTime      @updatedAt @map("updated_at")
+
+  org           Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+
+  @@index([orgId])
+  @@map("channels")
+}
+
+model Contact {
+  id           String   @id @default(cuid())
+  orgId        String   @map("org_id")
+  name         String
+  phone        String?
+  email        String?
+  avatarUrl    String?  @map("avatar_url")
+  notes        String?
+  customFields Json     @default("{}") @map("custom_fields")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  org           Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  identities    ContactIdentity[]
+  conversations Conversation[]
+
+  @@unique([orgId, phone])
+  @@map("contacts")
+}
+
+model ContactIdentity {
+  id          String      @id @default(cuid())
+  orgId       String      @map("org_id")
+  contactId   String      @map("contact_id")
+  channelType ChannelType @map("channel_type")
+  externalId  String      @map("external_id")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
+
+  org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  contact Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, channelType, externalId])
+  @@map("contact_identities")
+}
+
+model PipelineStage {
+  id             String   @id @default(cuid())
+  orgId          String   @map("org_id")
+  name           String
+  color          String
+  position       Int
+  isHumanHandoff Boolean  @default(false) @map("is_human_handoff")
+  isDefault      Boolean  @default(false) @map("is_default")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  org           Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+
+  @@index([orgId, position])
+  @@map("pipeline_stages")
+}
+
+model Conversation {
+  id                 String             @id @default(cuid())
+  orgId              String             @map("org_id")
+  contactId          String             @map("contact_id")
+  channelId          String             @map("channel_id")
+  status             ConversationStatus @default(OPEN)
+  assigneeId         String?            @map("assignee_id")
+  stageId            String?            @map("stage_id")
+  stagePosition      Float              @default(0) @map("stage_position")
+  aiEnabled          Boolean            @default(true) @map("ai_enabled")
+  unreadCount        Int                @default(0) @map("unread_count")
+  lastMessageAt      DateTime?          @map("last_message_at")
+  lastMessagePreview String?            @map("last_message_preview")
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+
+  org            Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  contact        Contact           @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  channel        Channel           @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  assignee       User?             @relation("ConversationAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  stage          PipelineStage?    @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  messages       Message[]
+  tags           ConversationTag[]
+  automationRuns AutomationRun[]
+
+  @@index([orgId, status])
+  @@index([orgId, stageId, stagePosition])
+  @@index([orgId, lastMessageAt])
+  @@map("conversations")
+}
+
+model Message {
+  id             String           @id @default(cuid())
+  orgId          String           @map("org_id")
+  conversationId String           @map("conversation_id")
+  direction      MessageDirection
+  type           MessageType
+  content        Json
+  status         MessageStatus    @default(PENDING)
+  externalId     String?          @map("external_id")
+  authorId       String?          @map("author_id")
+  isAiGenerated  Boolean          @default(false) @map("is_ai_generated")
+  errorMessage   String?          @map("error_message")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  author       User?        @relation("MessageAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@unique([orgId, externalId])
+  @@index([orgId, conversationId, createdAt])
+  @@map("messages")
+}
+
+model Tag {
+  id        String   @id @default(cuid())
+  orgId     String   @map("org_id")
+  name      String
+  color     String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  org           Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  conversations ConversationTag[]
+
+  @@unique([orgId, name])
+  @@map("tags")
+}
+
+model ConversationTag {
+  conversationId String   @map("conversation_id")
+  tagId          String   @map("tag_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  tag          Tag          @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, tagId])
+  @@map("conversation_tags")
+}
+
+model Automation {
+  id         String   @id @default(cuid())
+  orgId      String   @map("org_id")
+  name       String
+  enabled    Boolean  @default(true)
+  trigger    Json
+  conditions Json     @default("[]")
+  actions    Json     @default("[]")
+  runCount   Int      @default(0) @map("run_count")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  org  Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  runs AutomationRun[]
+
+  @@index([orgId])
+  @@map("automations")
+}
+
+model AutomationRun {
+  id             String    @id @default(cuid())
+  orgId          String    @map("org_id")
+  automationId   String    @map("automation_id")
+  conversationId String?   @map("conversation_id")
+  status         RunStatus
+  log            Json      @default("{}")
+  durationMs     Int       @map("duration_ms")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  org          Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  automation   Automation    @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, automationId])
+  @@map("automation_runs")
+}
+
+model KnowledgeSource {
+  id         String       @id @default(cuid())
+  orgId      String       @map("org_id")
+  type       SourceType
+  name       String
+  status     IngestStatus @default(PENDING)
+  meta       Json         @default("{}")
+  chunkCount Int          @default(0) @map("chunk_count")
+  createdAt  DateTime     @default(now()) @map("created_at")
+  updatedAt  DateTime     @updatedAt @map("updated_at")
+
+  org    Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  chunks KnowledgeChunk[]
+
+  @@index([orgId])
+  @@map("knowledge_sources")
+}
+
+/// Colunas fixadas pelo CONTRACTS §11 (o serviço de IA lê/escreve via SQL direto):
+/// id, org_id, source_id, content, embedding vector(1536), created_at.
+/// Índice HNSW vector_cosine_ops criado na migration inicial (SQL manual).
+model KnowledgeChunk {
+  id        String                       @id @default(cuid())
+  orgId     String                       @map("org_id")
+  sourceId  String                       @map("source_id")
+  content   String
+  embedding Unsupported("vector(1536)")?
+  createdAt DateTime                     @default(now()) @map("created_at")
+
+  org    Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  source KnowledgeSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@index([sourceId])
+  @@map("knowledge_chunks")
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  orgId     String   @map("org_id")
+  userId    String?  @map("user_id")
+  action    String
+  entity    String
+  entityId  String   @map("entity_id")
+  meta      Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, entity, entityId])
+  @@map("audit_logs")
+}
+
+model WebhookEventLog {
+  id              String   @id @default(cuid())
+  orgId           String?  @map("org_id")
+  source          String
+  externalEventId String?  @map("external_event_id")
+  payload         Json
+  status          String
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  org Organization? @relation(fields: [orgId], references: [id], onDelete: SetNull)
+
+  @@index([externalEventId])
+  @@map("webhook_event_logs")
+}

@@ -1,0 +1,131 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 240 20% 99%;
+    --foreground: 240 10% 9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 9%;
+    --primary: 243 75% 59%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 6% 94%;
+    --secondary-foreground: 240 8% 20%;
+    --muted: 240 6% 95%;
+    --muted-foreground: 240 4% 45%;
+    --accent: 244 75% 96%;
+    --accent-foreground: 243 66% 45%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 152 60% 36%;
+    --success-foreground: 0 0% 100%;
+    --warning: 35 92% 44%;
+    --warning-foreground: 0 0% 100%;
+    /* Ticks sobre a bolha OUTBOUND (bg-primary): tons claros e legíveis. */
+    --status-read: 197 100% 82%;
+    --status-failed: 0 100% 86%;
+    --border: 240 6% 90%;
+    --input: 240 6% 87%;
+    --ring: 243 75% 59%;
+    --radius: 0.625rem;
+    --brand-from: 243 75% 59%;
+    --brand-to: 262 83% 58%;
+    --chart-1: 243 75% 59%;
+    --chart-2: 262 83% 58%;
+    --chart-3: 199 89% 48%;
+    --chart-4: 152 60% 40%;
+    --chart-5: 35 92% 50%;
+  }
+
+  .dark {
+    --background: 240 10% 4%;
+    --foreground: 240 10% 94%;
+    --card: 240 8% 7%;
+    --card-foreground: 240 10% 94%;
+    --popover: 240 8% 6%;
+    --popover-foreground: 240 10% 94%;
+    --primary: 239 84% 67%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 6% 13%;
+    --secondary-foreground: 240 8% 86%;
+    --muted: 240 6% 11%;
+    --muted-foreground: 240 5% 62%;
+    --accent: 243 40% 17%;
+    --accent-foreground: 240 90% 88%;
+    --destructive: 0 66% 56%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 152 55% 46%;
+    --success-foreground: 152 80% 8%;
+    --warning: 38 92% 55%;
+    --warning-foreground: 35 90% 8%;
+    --status-read: 199 95% 74%;
+    --status-failed: 0 94% 80%;
+    --border: 240 6% 14%;
+    --input: 240 6% 17%;
+    --ring: 239 84% 67%;
+    --brand-from: 243 72% 62%;
+    --brand-to: 262 80% 62%;
+    --chart-1: 239 84% 67%;
+    --chart-2: 262 80% 66%;
+    --chart-3: 199 89% 56%;
+    --chart-4: 152 55% 50%;
+    --chart-5: 38 92% 58%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    @apply scroll-smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.28);
+    color: hsl(var(--foreground));
+  }
+
+  /* Focus ring acessível por padrão; componentes com ring próprio fazem outline-none */
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring) / 0.7);
+    outline-offset: 2px;
+  }
+
+  /* Scrollbars finas e discretas */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.3) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    border: 3px solid transparent;
+    background-clip: padding-box;
+    background-color: hsl(var(--muted-foreground) / 0.3);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground) / 0.5);
+  }
+}
