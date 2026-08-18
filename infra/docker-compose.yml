@@ -42,6 +42,16 @@ services:
     networks:
       - internal
 
+  # Named volumes começam com dono root:root — o container da api roda como
+  # usuário não-root 'node' (uid 1000) e falha com EACCES ao criar subpastas
+  # em /data/media (re-host de mídia inbound e uploads outbound, CONTRACTS
+  # §6/§13). Corrige a permissão uma vez, antes da api subir; idempotente.
+  media-init:
+    image: node:24-slim
+    command: ['sh', '-c', 'chown -R 1000:1000 /data/media']
+    volumes:
+      - media_data:/data/media
+
   api:
     build:
       context: ..
@@ -59,6 +69,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      media-init:
+        condition: service_completed_successfully
     networks:
       - internal
       - traefik
