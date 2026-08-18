@@ -1,0 +1,33 @@
+# deps
+node_modules/
+.pnpm-store/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# builds
+.next/
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# env & secrets — NUNCA versionar
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials*.json
+
+# logs & misc
+*.log
+.DS_Store
+Thumbs.db
+coverage/
+.turbo/
+
+# uploads / media local
+uploads/
+storage/
