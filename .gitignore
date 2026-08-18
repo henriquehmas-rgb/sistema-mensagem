@@ -28,6 +28,7 @@ Thumbs.db
 coverage/
 .turbo/
 
-# uploads / media local
-uploads/
-storage/
+# uploads / media local (raiz apenas — NÃO bloquear código-fonte como apps/api/src/uploads/)
+/uploads/
+/storage/
+/services/ai/storage/
