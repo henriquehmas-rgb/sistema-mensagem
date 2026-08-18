@@ -47,27 +47,31 @@ export type TenantPrismaClient = Omit<
  * - `prismaSystem`: client cru, SEM escopo — uso explícito em webhooks, auth e seed.
  */
 @Injectable()
-export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+export class PrismaService implements OnModuleInit, OnModuleDestroy {
+  // Composição em vez de `extends PrismaClient`: o construtor do client gerado
+  // retorna um Proxy que não preserva o prototype de subclasses (instanceof
+  // falha e getters somem), o que quebrava os accessors de modelo em runtime.
   private readonly logger = new Logger(PrismaService.name);
+  private readonly client: PrismaClient;
   readonly tenant: TenantPrismaClient;
   private readonly isProduction: boolean;
 
   constructor(config: ConfigService<Env, true>, tenancy: TenancyService) {
-    super({
+    this.client = new PrismaClient({
       datasources: { db: { url: config.get('DATABASE_URL', { infer: true }) } },
     });
     this.isProduction = config.get('NODE_ENV', { infer: true }) === 'production';
-    this.tenant = createTenantClient(this, tenancy);
+    this.tenant = createTenantClient(this.client, tenancy);
   }
 
   /** Acesso sem escopo de tenant — SEMPRE nomeie a intenção no call site. */
   get prismaSystem(): PrismaClient {
-    return this;
+    return this.client;
   }
 
   async onModuleInit(): Promise<void> {
     try {
-      await this.$connect();
+      await this.client.$connect();
     } catch (error) {
       if (this.isProduction) {
         throw error;
@@ -79,6 +83,6 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   }
 
   async onModuleDestroy(): Promise<void> {
-    await this.$disconnect();
+    await this.client.$disconnect();
   }
 }
