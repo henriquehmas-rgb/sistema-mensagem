@@ -49,6 +49,11 @@ services:
     restart: unless-stopped
     env_file:
       - ../.env
+    # Mídia inbound re-hospedada (CONTRACTS §6) — sobrepõe o MEDIA_DIR do .env.
+    environment:
+      MEDIA_DIR: /data/media
+    volumes:
+      - media_data:/data/media
     depends_on:
       postgres:
         condition: service_healthy
@@ -148,3 +153,4 @@ networks:
 volumes:
   pg_data:
   redis_data:
+  media_data:

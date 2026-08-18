@@ -9,12 +9,20 @@ import {
   Query,
   VERSION_NEUTRAL,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { Public } from '../auth/decorators/public.decorator';
 import type { MessageDto } from '../common/serializers';
 import { CreateWebchatMessageDto } from './dto/create-webchat-message.dto';
 import { CreateWebchatSessionDto } from './dto/create-webchat-session.dto';
 import { ListWebchatMessagesQuery } from './dto/list-webchat-messages.query';
 import { WebchatService, type WebchatSessionDto } from './webchat.service';
+
+/**
+ * POST /session cria Contact+Conversation reais sem autenticação — throttle
+ * bem mais restrito que o default para conter flood deliberado do inbox de
+ * qualquer org (slug é público) com amplificação via automações (§9).
+ */
+const SESSION_THROTTLE = { default: { limit: 10, ttl: 60_000 } }; // CONTRACTS §9: webchat session 10/min
 
 /**
  * Webchat público (CONTRACTS §6) — VERSION_NEUTRAL (/api/webchat/**), sem JWT
@@ -27,6 +35,7 @@ export class WebchatController {
   constructor(private readonly webchatService: WebchatService) {}
 
   @Post('session')
+  @Throttle(SESSION_THROTTLE)
   @HttpCode(HttpStatus.OK)
   createSession(@Body() dto: CreateWebchatSessionDto): Promise<WebchatSessionDto> {
     return this.webchatService.createSession(dto);

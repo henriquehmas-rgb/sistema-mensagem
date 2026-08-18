@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Check, Copy, Loader2, Lock, Plus } from "lucide-react";
 import { toast } from "sonner";
 
@@ -265,33 +265,71 @@ function MetaChannelForm({ type, onDone }: ChannelFormProps & { type: Extract<Ch
   );
 }
 
+/** Snippet de instalação do webchat — slug SEMPRE vindo do servidor (config.orgSlug). */
+function webchatSnippet(orgSlug: string): string {
+  return `<script src="${publicOrigin()}/webchat.js" data-org="${orgSlug}" async></script>`;
+}
+
+function webchatSlugOf(channel: ChannelDto): string | null {
+  return channel.type === "WEBCHAT" && typeof channel.config.orgSlug === "string"
+    ? channel.config.orgSlug
+    : null;
+}
+
+function WebchatSnippetBlock({ orgSlug }: { orgSlug: string }) {
+  const snippet = webchatSnippet(orgSlug);
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <Label className="text-xs">Snippet para o seu site</Label>
+        <CopyButton value={snippet} label="Snippet" />
+      </div>
+      <pre className="overflow-x-auto rounded-md bg-muted p-3 text-[11px] leading-relaxed">
+        <code>{snippet}</code>
+      </pre>
+      <p className="text-[11px] text-muted-foreground">
+        Cole antes do fechamento da tag <code>&lt;/body&gt;</code> do seu site. O
+        identificador <code>data-org</code> já vem preenchido com o slug real da
+        sua organização.
+      </p>
+    </div>
+  );
+}
+
 function WebchatChannelForm({ onDone }: ChannelFormProps) {
   const createChannel = useCreateChannel();
 
-  const [form, setForm] = useState({ name: "", orgSlug: "" });
+  const [name, setName] = useState("");
+  const [created, setCreated] = useState<ChannelDto | null>(null);
 
-  const snippet = useMemo(() => {
-    const slug = form.orgSlug.trim() || "sua-organizacao";
-    return `<script src="${publicOrigin()}/webchat.js" data-org="${slug}" async></script>`;
-  }, [form.orgSlug]);
-
-  const canSubmit =
-    form.name.trim().length > 0 &&
-    form.orgSlug.trim().length > 0 &&
-    !createChannel.isPending;
+  const canSubmit = name.trim().length > 0 && !createChannel.isPending;
 
   const handleSubmit = (event: React.FormEvent): void => {
     event.preventDefault();
     if (!canSubmit) return;
+    // O slug NÃO é digitado pelo usuário: a API preenche config.orgSlug com o
+    // slug real da organização autenticada — o snippet exibido a seguir é
+    // garantidamente válido (nada de typo gerando widget quebrado).
     createChannel.mutate(
-      {
-        type: "WEBCHAT",
-        name: form.name.trim(),
-        config: { orgSlug: form.orgSlug.trim() },
-      },
-      { onSuccess: onDone },
+      { type: "WEBCHAT", name: name.trim() },
+      { onSuccess: (channel) => setCreated(channel) },
     );
   };
+
+  const createdSlug = created ? webchatSlugOf(created) : null;
+
+  if (created && createdSlug) {
+    return (
+      <div className="space-y-3">
+        <WebchatSnippetBlock orgSlug={createdSlug} />
+        <DialogFooter>
+          <Button type="button" onClick={onDone}>
+            Concluir
+          </Button>
+        </DialogFooter>
+      </div>
+    );
+  }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
@@ -301,47 +339,18 @@ function WebchatChannelForm({ onDone }: ChannelFormProps) {
         </Label>
         <Input
           id="webchat-name"
-          value={form.name}
-          onChange={(event) =>
-            setForm((value) => ({ ...value, name: event.target.value }))
-          }
+          value={name}
+          onChange={(event) => setName(event.target.value)}
           placeholder="Chat do site"
           className="h-9"
           autoFocus
           required
         />
       </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="webchat-slug" className="text-xs">
-          Slug da organização *
-        </Label>
-        <Input
-          id="webchat-slug"
-          value={form.orgSlug}
-          onChange={(event) =>
-            setForm((value) => ({ ...value, orgSlug: event.target.value }))
-          }
-          placeholder="minha-empresa"
-          className="h-9 font-mono text-xs"
-          required
-        />
-        <p className="text-[11px] text-muted-foreground">
-          Identifica sua organização no widget (o mesmo slug usado no login).
-        </p>
-      </div>
-
-      <div className="space-y-1.5">
-        <div className="flex items-center justify-between">
-          <Label className="text-xs">Snippet para o seu site</Label>
-          <CopyButton value={snippet} label="Snippet" />
-        </div>
-        <pre className="overflow-x-auto rounded-md bg-muted p-3 text-[11px] leading-relaxed">
-          <code>{snippet}</code>
-        </pre>
-        <p className="text-[11px] text-muted-foreground">
-          Cole antes do fechamento da tag <code>&lt;/body&gt;</code> do seu site.
-        </p>
-      </div>
+      <p className="text-[11px] text-muted-foreground">
+        O snippet de instalação é gerado após a criação do canal, já com o
+        identificador da sua organização preenchido automaticamente.
+      </p>
 
       <DialogFooter>
         <Button type="submit" disabled={!canSubmit}>
@@ -446,6 +455,7 @@ function ConnectChannelDialog({
 
 function ChannelCard({ channel }: { channel: ChannelDto }) {
   const status = STATUS_META[channel.status];
+  const webchatSlug = webchatSlugOf(channel);
   return (
     <div
       className={cn(
@@ -463,6 +473,9 @@ function ChannelCard({ channel }: { channel: ChannelDto }) {
           {channel.externalId ? ` · ${channel.externalId}` : ""}
         </p>
       </div>
+      {webchatSlug ? (
+        <CopyButton value={webchatSnippet(webchatSlug)} label="Snippet" />
+      ) : null}
       <Badge variant={status.variant}>{status.label}</Badge>
     </div>
   );

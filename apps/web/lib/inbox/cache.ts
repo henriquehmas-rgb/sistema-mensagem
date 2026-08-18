@@ -172,6 +172,58 @@ export function patchConversationInCaches(
   }
 }
 
+/**
+ * Atualiza o lastMessagePreview das listas/detalhe/por-contato quando
+ * `message` é a ÚLTIMA mensagem da conversa (lastMessageAt <= createdAt —
+ * comparação lexicográfica de ISO strings). Usado no `message:updated`
+ * (re-host de mídia), que pode mudar o preview (ex.: caption).
+ */
+export function patchConversationPreviewForMessage(
+  queryClient: QueryClient,
+  message: MessageDto,
+  preview: string,
+): void {
+  const apply = (item: ConversationDto): ConversationDto =>
+    item.id === message.conversationId &&
+    item.lastMessageAt !== null &&
+    item.lastMessageAt <= message.createdAt
+      ? { ...item, lastMessagePreview: preview }
+      : item;
+
+  const listQueries = queryClient.getQueriesData<ConversationsInfinite>({
+    queryKey: inboxKeys.conversationLists,
+  });
+  for (const [queryKey, data] of listQueries) {
+    if (!data) continue;
+    queryClient.setQueryData<ConversationsInfinite>(queryKey, (current) =>
+      current
+        ? {
+            ...current,
+            pages: current.pages.map((page) => ({
+              ...page,
+              data: page.data.map(apply),
+            })),
+          }
+        : current,
+    );
+  }
+
+  const detail = queryClient.getQueryData<ConversationDto>(
+    inboxKeys.conversation(message.conversationId),
+  );
+  if (detail) {
+    queryClient.setQueryData(inboxKeys.conversation(message.conversationId), apply(detail));
+  }
+
+  const byContactQueries = queryClient.getQueriesData<ConversationDto[]>({
+    queryKey: inboxKeys.contactConversationsAll,
+  });
+  for (const [queryKey, data] of byContactQueries) {
+    if (!data) continue;
+    queryClient.setQueryData<ConversationDto[]>(queryKey, data.map(apply));
+  }
+}
+
 /** Propaga um contato atualizado para todas as conversas em cache. */
 export function patchContactInCaches(
   queryClient: QueryClient,
@@ -264,6 +316,27 @@ export function upsertMessageInCache(
   }
 
   queryClient.setQueryData<MessagesInfinite>(key, { ...current, pages });
+}
+
+/**
+ * Patch POR ID de uma mensagem já presente no cache da thread (sem inserir —
+ * diferente do upsert). Usado no `message:updated`: se a thread nunca foi
+ * aberta/carregada, não há o que atualizar (a API já devolve o content novo).
+ */
+export function patchMessageInCache(queryClient: QueryClient, message: MessageDto): void {
+  const key = inboxKeys.messages(message.conversationId);
+  const current = queryClient.getQueryData<MessagesInfinite>(key);
+  if (!current) return;
+
+  queryClient.setQueryData<MessagesInfinite>(key, {
+    ...current,
+    pages: current.pages.map((page) => ({
+      ...page,
+      data: page.data.map((item) =>
+        item.id === message.id ? { ...item, ...message } : item,
+      ),
+    })),
+  });
 }
 
 const STATUS_RANK: Record<MessageStatus, number> = {

@@ -6,6 +6,7 @@ import type { MessageStatus } from "./enums";
 /** Eventos emitidos pelo servidor (rooms org:{orgId} e conversation:{id}) */
 export interface ServerToClientEvents {
   "message:new": (p: { message: MessageDto; conversation: ConversationDto }) => void;
+  "message:updated": (p: { message: MessageDto }) => void;
   "message:status": (p: {
     messageId: string;
     conversationId: string;

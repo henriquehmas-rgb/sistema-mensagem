@@ -21,8 +21,10 @@ type OutboundMessage = Prisma.MessageGetPayload<{
  * - WHATSAPP: com credenciais → envio real via Meta Graph API (Cloud API); grava
  *   o wamid em externalId e aguarda sent/delivered/read via webhook. Sem
  *   credenciais (dev/demo) → marca SENT imediatamente.
- * - INSTAGRAM: envio via Graph API ainda não implementado (ver ARCHITECTURE
- *   "Limitações conhecidas") — comporta-se como dev/demo (SENT imediato).
+ * - INSTAGRAM: com credenciais → envio real via Graph API (POST
+ *   /{ig_business_id}/messages, recipient = ContactIdentity INSTAGRAM); grava o
+ *   message_id em externalId; READ chega via webhook (messaging[].read). Sem
+ *   credenciais (dev/demo) → marca SENT imediatamente.
  * Erros permanentes (4xx/config) → FAILED; transientes (rede/5xx) → throw p/ retry.
  * Sem contexto de request → prismaSystem SEMPRE filtrando orgId do payload.
  */
@@ -79,12 +81,11 @@ export class MessageOutboundProcessor extends WorkerHost {
       }
 
       case 'INSTAGRAM': {
-        if (hasCredentials) {
-          this.logger.warn(
-            `INSTAGRAM ${messageId}: envio Graph API ainda não implementado (limitação conhecida) — marcando SENT`,
-          );
+        if (!hasCredentials) {
+          await this.markSent(orgId, messageId, message.conversationId); // dev/demo
+          return;
         }
-        await this.markSent(orgId, messageId, message.conversationId);
+        await this.sendInstagram(orgId, message, channel);
         return;
       }
     }
@@ -149,6 +150,77 @@ export class MessageOutboundProcessor extends WorkerHost {
       }
       throw error; // transiente (rede/5xx) → BullMQ retry com backoff
     }
+  }
+
+  /** Envio real via Instagram Direct (Graph API) — message_id vai para externalId. */
+  private async sendInstagram(
+    orgId: string,
+    message: OutboundMessage,
+    channel: Channel,
+  ): Promise<void> {
+    const credentials = this.metaGraph.decryptCredentials(channel);
+    if (!credentials) {
+      await this.markFailed(
+        orgId,
+        message.id,
+        message.conversationId,
+        'Credenciais do canal indecifráveis — reconfigure o canal',
+      );
+      return;
+    }
+
+    const recipientId = await this.resolveInstagramRecipient(orgId, message.conversation.contactId);
+    if (!recipientId) {
+      await this.markFailed(
+        orgId,
+        message.id,
+        message.conversationId,
+        'Contato sem identidade Instagram para entrega no Direct',
+      );
+      return;
+    }
+
+    try {
+      const result = await this.metaGraph.sendInstagramMessage(
+        {
+          ...credentials,
+          // ig business id pode vir das credenciais ou do externalId do canal
+          igBusinessId:
+            typeof credentials.igBusinessId === 'string' && credentials.igBusinessId
+              ? credentials.igBusinessId
+              : (channel.externalId ?? ''),
+        },
+        recipientId,
+        message.type,
+        typeof message.content === 'object' && message.content !== null
+          ? (message.content as Record<string, unknown>)
+          : {},
+      );
+      await this.prisma.prismaSystem.message.update({
+        where: { id: message.id },
+        data: { status: MessageStatus.SENT, externalId: result.externalId },
+      });
+      this.realtime.emitMessageStatus(orgId, {
+        messageId: message.id,
+        conversationId: message.conversationId,
+        status: MessageStatus.SENT,
+      });
+    } catch (error) {
+      if (error instanceof GraphPermanentError) {
+        await this.markFailed(orgId, message.id, message.conversationId, error.message);
+        return;
+      }
+      throw error; // transiente (rede/5xx) → BullMQ retry com backoff
+    }
+  }
+
+  /** IGSID do contato — ContactIdentity INSTAGRAM (sem fallback: IG não usa telefone). */
+  private async resolveInstagramRecipient(orgId: string, contactId: string): Promise<string | null> {
+    const identity = await this.prisma.prismaSystem.contactIdentity.findFirst({
+      where: { orgId, contactId, channelType: 'INSTAGRAM' },
+      select: { externalId: true },
+    });
+    return identity?.externalId ?? null;
   }
 
   /** wa_id da ContactIdentity (preferido) ou telefone do contato, só dígitos. */

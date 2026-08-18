@@ -17,6 +17,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { HealthModule } from './health/health.module';
 import { InboundModule } from './inbound/inbound.module';
 import { KnowledgeModule } from './knowledge/knowledge.module';
+import { MediaModule } from './media/media.module';
 import { MessagesModule } from './messages/messages.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { QueueModule } from './queues/queue.module';
@@ -83,6 +84,7 @@ function parseRedisConnection(redisUrl: string) {
     TagsModule,
     DashboardModule,
     KnowledgeModule,
+    MediaModule,
     ChannelsModule,
     InboundModule,
     WebhooksModule,

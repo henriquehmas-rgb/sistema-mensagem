@@ -17,6 +17,7 @@ export const socketRooms = {
 /** Server→Client — payload sempre com o recurso completo serializado. */
 export interface ServerToClientEvents {
   'message:new': { message: MessageDto; conversation: ConversationDto };
+  'message:updated': { message: MessageDto };
   'message:status': { messageId: string; conversationId: string; status: MessageStatus };
   'conversation:new': { conversation: ConversationDto };
   'conversation:updated': { conversation: ConversationDto };

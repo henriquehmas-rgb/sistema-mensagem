@@ -49,13 +49,15 @@ export class ChannelsService {
 
   /** POST /channels — credenciais cifradas com AES-256-GCM antes de persistir. */
   async create(dto: CreateChannelDto): Promise<ChannelDto> {
+    const orgId = this.tenancy.getOrgIdOrThrow();
+    const config = await this.resolveConfig(orgId, dto.type, dto.config);
     const channel = await this.prisma.tenant.channel.create({
       data: {
         // a extension injeta o mesmo orgId em runtime; explícito aqui p/ o type system
-        orgId: this.tenancy.getOrgIdOrThrow(),
+        orgId,
         type: dto.type,
         name: dto.name,
-        config: (dto.config ?? {}) as Prisma.InputJsonValue,
+        config: config as Prisma.InputJsonValue,
         encryptedCredentials: this.encryptCredentials(dto.credentials),
         externalId: dto.externalId ?? null,
       },
@@ -71,12 +73,18 @@ export class ChannelsService {
 
   /** PATCH /channels/:id — credentials informadas SUBSTITUEM as anteriores. */
   async update(id: string, dto: UpdateChannelDto): Promise<ChannelDto> {
-    await this.findOrThrow(id);
+    const existing = await this.findOrThrow(id);
 
     const data: Prisma.ChannelUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.status !== undefined) data.status = dto.status;
-    if (dto.config !== undefined) data.config = dto.config as Prisma.InputJsonValue;
+    if (dto.config !== undefined) {
+      data.config = (await this.resolveConfig(
+        existing.orgId,
+        existing.type,
+        dto.config,
+      )) as Prisma.InputJsonValue;
+    }
     if (dto.externalId !== undefined) data.externalId = dto.externalId;
     if (dto.credentials !== undefined) {
       data.encryptedCredentials = this.encryptCredentials(dto.credentials);
@@ -142,6 +150,38 @@ export class ChannelsService {
       meta: { success, message },
     });
     return { success, status, message };
+  }
+
+  /**
+   * Config server-autoritativa: para canais WEBCHAT, `config.orgSlug` é SEMPRE
+   * o slug real da organização autenticada (o widget resolve a org por esse
+   * slug — um valor livre digitado geraria um snippet quebrado sem feedback).
+   * Valor divergente informado pelo cliente → 400 explícito.
+   */
+  private async resolveConfig(
+    orgId: string,
+    type: ChannelType,
+    config: Record<string, unknown> | undefined,
+  ): Promise<Record<string, unknown>> {
+    const base = config ?? {};
+    if (type !== ChannelType.WEBCHAT) {
+      return base;
+    }
+    // Organization não é modelo tenant-escopado — leitura via prismaSystem com id explícito.
+    const org = await this.prisma.prismaSystem.organization.findUnique({
+      where: { id: orgId },
+      select: { slug: true },
+    });
+    if (!org) {
+      throw new NotFoundException('Organização não encontrada');
+    }
+    const provided = base.orgSlug;
+    if (typeof provided === 'string' && provided.length > 0 && provided !== org.slug) {
+      throw new BadRequestException(
+        `config.orgSlug não corresponde ao slug da organização ("${org.slug}")`,
+      );
+    }
+    return { ...base, orgSlug: org.slug };
   }
 
   private encryptCredentials(credentials: Record<string, unknown> | undefined): string {

@@ -11,11 +11,18 @@ const REQUEST_TIMEOUT_MS = 10_000;
 export interface MetaChannelCredentials {
   accessToken?: string;
   phoneNumberId?: string;
+  igBusinessId?: string;
   [key: string]: unknown;
 }
 
 export interface GraphSendResult {
-  externalId: string; // wamid
+  externalId: string; // wamid (WhatsApp) | message_id (Instagram)
+}
+
+/** Perfil público de um usuário IG (best-effort; campos podem faltar). */
+export interface InstagramProfile {
+  name: string | null;
+  profilePicUrl: string | null;
 }
 
 /**
@@ -35,11 +42,13 @@ interface GraphErrorBody {
 }
 
 /**
- * Cliente da Meta Graph API (WhatsApp Cloud API).
+ * Cliente da Meta Graph API (WhatsApp Cloud API + Instagram Direct).
  * - Credenciais SEMPRE via decrypt de Channel.encryptedCredentials (AES-256-GCM);
  *   tokens nunca são logados (CONTRACTS §9).
  * - `testChannel`: GET /{phone_number_id} — valida token + id (POST /channels/:id/test).
  * - `sendWhatsAppMessage`: POST /{phone_number_id}/messages — retorna o wamid.
+ * - `sendInstagramMessage`: POST /{ig_business_id}/messages — retorna o message_id.
+ * - `fetchInstagramProfile`: GET /{igsid}?fields=name,profile_pic — best-effort.
  */
 @Injectable()
 export class MetaGraphService {
@@ -110,12 +119,8 @@ export class MetaGraphService {
     });
 
     if (!response.ok) {
-      const description = await this.describeGraphError(response);
-      // 4xx = payload/credencial inválidos (permanente); 5xx = transiente (retry).
-      if (response.status >= 400 && response.status < 500) {
-        throw new GraphPermanentError(description);
-      }
-      throw new Error(description);
+      // Rate-limit (429/códigos de throughput) e 5xx retentam; demais 4xx são permanentes.
+      await this.throwGraphSendError(response);
     }
 
     const body = (await response.json()) as { messages?: Array<{ id?: string }> };
@@ -124,6 +129,120 @@ export class MetaGraphService {
       throw new Error('Graph API não retornou wamid na resposta de envio');
     }
     return { externalId };
+  }
+
+  /**
+   * Perfil do usuário IG (nome/avatar) — BEST-EFFORT: nunca lança; retorna null
+   * em token sem permissão, janela de acesso expirada, rede etc. O call site
+   * usa fallback ('Instagram User').
+   */
+  async fetchInstagramProfile(
+    credentials: MetaChannelCredentials,
+    igUserId: string,
+  ): Promise<InstagramProfile | null> {
+    const accessToken = typeof credentials.accessToken === 'string' ? credentials.accessToken : '';
+    if (!accessToken || !igUserId) {
+      return null;
+    }
+    try {
+      const response = await this.graphFetch(
+        `/${igUserId}?fields=name,profile_pic`,
+        accessToken,
+        { method: 'GET' },
+      );
+      if (!response.ok) {
+        this.logger.warn(`Perfil IG indisponível: ${await this.describeGraphError(response)}`);
+        return null;
+      }
+      const body = (await response.json()) as { name?: string; profile_pic?: string };
+      return {
+        name: typeof body.name === 'string' ? body.name : null,
+        profilePicUrl: typeof body.profile_pic === 'string' ? body.profile_pic : null,
+      };
+    } catch (error) {
+      this.logger.warn(`Falha ao buscar perfil IG: ${(error as Error).message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Envia uma mensagem OUTBOUND via Instagram Direct (Graph API, formato Messenger):
+   * POST /{ig_business_id}/messages com {recipient:{id}, message:{...}}.
+   * Suporta TEXT e mídia por link (IMAGE/AUDIO/VIDEO → attachment nativo;
+   * DOCUMENT → file; STICKER → image). Tipos sem mapeamento → GraphPermanentError.
+   */
+  async sendInstagramMessage(
+    credentials: MetaChannelCredentials,
+    recipientId: string,
+    type: MessageType,
+    content: Record<string, unknown>,
+  ): Promise<GraphSendResult> {
+    const { accessToken, igBusinessId } = this.requireInstagramCredentials(credentials);
+    const payload = {
+      recipient: { id: recipientId },
+      message: this.buildInstagramMessagePayload(type, content),
+    };
+
+    const response = await this.graphFetch(`/${igBusinessId}/messages`, accessToken, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      // Rate-limit (429/códigos de throughput) e 5xx retentam; demais 4xx são permanentes.
+      await this.throwGraphSendError(response);
+    }
+
+    const body = (await response.json()) as { message_id?: string };
+    if (!body.message_id) {
+      throw new Error('Graph API não retornou message_id na resposta de envio IG');
+    }
+    return { externalId: body.message_id };
+  }
+
+  private buildInstagramMessagePayload(
+    type: MessageType,
+    content: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const text = typeof content.text === 'string' ? content.text : '';
+    const mediaUrl = typeof content.mediaUrl === 'string' ? content.mediaUrl : '';
+    const attachment = (attachmentType: 'image' | 'audio' | 'video' | 'file') => ({
+      attachment: { type: attachmentType, payload: { url: mediaUrl } },
+    });
+
+    switch (type) {
+      case MessageType.TEXT:
+        return { text };
+      case MessageType.IMAGE:
+      case MessageType.STICKER: // IG não tem sticker por link — degrada para imagem
+        return attachment('image');
+      case MessageType.AUDIO:
+        return attachment('audio');
+      case MessageType.VIDEO:
+        return attachment('video');
+      case MessageType.DOCUMENT:
+        return attachment('file');
+      case MessageType.SYSTEM:
+        throw new GraphPermanentError('Mensagens SYSTEM não são entregues a canais');
+      default:
+        throw new GraphPermanentError(`Tipo de mensagem sem mapeamento Instagram Direct: ${type}`);
+    }
+  }
+
+  private requireInstagramCredentials(credentials: MetaChannelCredentials): {
+    accessToken: string;
+    igBusinessId: string;
+  } {
+    const accessToken = typeof credentials.accessToken === 'string' ? credentials.accessToken : '';
+    const igBusinessId =
+      typeof credentials.igBusinessId === 'string' ? credentials.igBusinessId : '';
+    if (!accessToken || !igBusinessId) {
+      throw new GraphPermanentError(
+        'Credenciais incompletas: accessToken e igBusinessId são obrigatórios',
+      );
+    }
+    return { accessToken, igBusinessId };
   }
 
   private buildMessagePayload(
@@ -214,13 +333,43 @@ export class MetaGraphService {
   }
 
   private async describeGraphError(response: Response): Promise<string> {
+    const { description } = await this.classifyGraphError(response);
+    return description;
+  }
+
+  /** Códigos de rate-limit/throughput da Meta que chegam como 4xx mas são transientes. */
+  private static readonly TRANSIENT_GRAPH_CODES = new Set([4, 17, 32, 613, 130429, 131056]);
+
+  /**
+   * Lê o corpo de erro UMA vez e classifica: rate-limit (429 ou codes de
+   * throughput) e 5xx são transientes (retry BullMQ); demais 4xx, permanentes.
+   */
+  private async classifyGraphError(
+    response: Response,
+  ): Promise<{ description: string; transient: boolean }> {
+    let description: string;
+    let code: number | undefined;
     try {
       const body = (await response.json()) as GraphErrorBody;
       const message = body.error?.message ?? 'erro desconhecido';
-      const code = body.error?.code;
-      return `Graph API ${response.status}${code ? ` (code ${code})` : ''}: ${message}`;
+      code = body.error?.code;
+      description = `Graph API ${response.status}${code ? ` (code ${code})` : ''}: ${message}`;
     } catch {
-      return `Graph API ${response.status}: resposta não-JSON`;
+      description = `Graph API ${response.status}: resposta não-JSON`;
     }
+    const transient =
+      response.status === 429 ||
+      response.status >= 500 ||
+      (code !== undefined && MetaGraphService.TRANSIENT_GRAPH_CODES.has(code));
+    return { description, transient };
+  }
+
+  /** Lança GraphPermanentError (sem retry) ou Error comum (retry) conforme a classificação. */
+  private async throwGraphSendError(response: Response): Promise<never> {
+    const { description, transient } = await this.classifyGraphError(response);
+    if (transient) {
+      throw new Error(description);
+    }
+    throw new GraphPermanentError(description);
   }
 }

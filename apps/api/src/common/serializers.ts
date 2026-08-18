@@ -197,6 +197,16 @@ export function toMessageDto(message: MessageWithAuthor): MessageDto {
   };
 }
 
+/**
+ * Projeção do MessageDto para o VISITANTE anônimo do webchat: errorMessage
+ * carrega strings de erro internas (provider de IA, pipeline) e NUNCA sai para
+ * fora da org — o status (FAILED) basta para a UX de falha. Usada no relay do
+ * namespace /webchat e nas rotas públicas /api/webchat/messages.
+ */
+export function sanitizeMessageForVisitor(message: MessageDto): MessageDto {
+  return message.errorMessage === null ? message : { ...message, errorMessage: null };
+}
+
 export function toConversationDto(conversation: ConversationWithRelations): ConversationDto {
   return {
     id: conversation.id,

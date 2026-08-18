@@ -20,6 +20,16 @@ Canais: WhatsApp Cloud API (Meta), Instagram Direct, Webchat embutível.
 4. Se `handoff=true`: conversa move para stage de intervenção humana, `aiEnabled=false`, kanban atualiza em tempo real.
 5. Eventos de negócio disparam `automation-run` (motor de automações: condições → ações).
 
+**Instagram Direct** segue o mesmo pipeline com o payload Messenger (`object: instagram`,
+`entry[].messaging[]`): Channel INSTAGRAM roteado por `externalId == recipient.id`
+(ig business id), dedupe por `mid`, echoes (`message.is_echo`) e mensagens do próprio
+business ignorados, nome/avatar do contato via Graph API `GET /{igsid}?fields=name,profile_pic`
+(best-effort, fallback "Instagram User"). Mídia inbound guarda a URL do CDN da Meta em
+`content.mediaUrl` (validade longa, sem re-host). Envio OUTBOUND via
+`POST /{ig_business_id}/messages` (`{recipient:{id}, message:{text|attachment}}`) com o
+`message_id` em `Message.externalId`; recibos `messaging[].read` marcam READ nas
+OUTBOUND anteriores da conversa (+ `message:status`).
+
 ## Módulos do monorepo
 | Caminho | Responsável | Conteúdo |
 |---|---|---|
@@ -32,14 +42,19 @@ Canais: WhatsApp Cloud API (Meta), Instagram Direct, Webchat embutível.
 
 Detalhes de nomes/rotas/filas/eventos: **docs/CONTRACTS.md** (obrigatório para todo módulo).
 
+## Mídia inbound (WhatsApp) — re-host
+A URL de mídia da Meta expira em minutos e exige download autenticado; por isso a api
+re-hospeda: o processor `webhook-ingest` tenta o re-host INLINE (MediaService:
+`GET graph/{media_id}` → download com Bearer, limite 30MB, timeout curto) ANTES de criar a
+Message → `content.mediaUrl` público (`/api/media/{orgId}/{arquivo}`, servido de `MEDIA_DIR`
+— volume `media_data` no compose). Se o inline falhar, a Message nasce com `content.mediaId`
+e um job delayed `media-fetch` (mesma fila, até 3 tentativas) completa o re-host e emite
+`message:updated`. Não se aplica ao Instagram: as URLs do CDN IG têm validade longa e entram
+direto em `content.mediaUrl`.
+
 ## Limitações conhecidas (corte de escopo auditável)
-- **Instagram Direct**: recebimento (webhook `object: instagram`, formato Messenger) e envio
-  via Graph API ainda não implementados. Webhooks IG são registrados em `webhook_event_logs`
-  com status `ignored`; envio OUTBOUND em canal INSTAGRAM se comporta como dev/demo (marca
-  SENT sem entrega real). WhatsApp e Webchat estão completos (inbound + outbound + status).
-- **Mídia inbound (WhatsApp)**: a URL de mídia da Meta expira em minutos e exige download
-  autenticado + re-host. Mensagens de mídia armazenam `content.mediaId`/`mimeType` (não
-  `mediaUrl`); a resolução/re-host de mídia é etapa futura.
+- **Upload de mídia (webchat/anexos do agente)**: nenhum endpoint de upload novo — o
+  re-host acima cobre apenas mídia INBOUND do WhatsApp; anexos OUTBOUND continuam por URL.
 
 ## Deploy
 - VPS `/docker/sistema-mensagem/` via git clone + `docker compose up -d --build`.

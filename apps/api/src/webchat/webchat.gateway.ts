@@ -1,5 +1,12 @@
 import { Logger } from '@nestjs/common';
-import { OnGatewayConnection, OnGatewayInit, WebSocketGateway } from '@nestjs/websockets';
+import {
+  ConnectedSocket,
+  MessageBody,
+  OnGatewayConnection,
+  OnGatewayInit,
+  SubscribeMessage,
+  WebSocketGateway,
+} from '@nestjs/websockets';
 import type { Namespace, Socket } from 'socket.io';
 import { RealtimeService } from '../realtime/realtime.service';
 import { socketRooms } from '../realtime/socket-events';
@@ -57,5 +64,25 @@ export class WebchatGateway implements OnGatewayInit, OnGatewayConnection {
     }
     void socket.join(socketRooms.conversation(visitor.conversationId));
     this.logger.debug(`Visitante conectado (conversation=${visitor.conversationId})`);
+  }
+
+  /**
+   * Typing do visitante → agentes com a conversa aberta no /rt. O payload do
+   * cliente é só {isTyping}; conversationId/contactId vêm do token verificado.
+   */
+  @SubscribeMessage('typing')
+  handleTyping(
+    @ConnectedSocket() socket: WebchatSocket,
+    @MessageBody() body: { isTyping?: unknown },
+  ): void {
+    const visitor = socket.data.visitor;
+    if (!visitor || typeof body?.isTyping !== 'boolean') {
+      return;
+    }
+    this.realtime.emitTypingFromVisitor({
+      conversationId: visitor.conversationId,
+      contactId: visitor.sub,
+      isTyping: body.isTyping,
+    });
   }
 }

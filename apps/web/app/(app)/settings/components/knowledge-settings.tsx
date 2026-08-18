@@ -76,8 +76,8 @@ export function KnowledgeSettings() {
     if (!canSubmit) return;
     createSource.mutate(
       mode === "url"
-        ? { type: "URL", name: name.trim(), url: url.trim() }
-        : { type: textType, name: name.trim(), text: text.trim() },
+        ? { type: "URL", name: name.trim(), contentUrl: url.trim() }
+        : { type: textType, name: name.trim(), contentText: text.trim() },
       {
         onSuccess: () => {
           setName("");

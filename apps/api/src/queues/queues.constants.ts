@@ -22,6 +22,21 @@ export interface WebhookIngestJob {
   receivedAt: string;
 }
 
+/** Nome do job de retry do re-host de mídia (mesma fila `webhook-ingest`). */
+export const MEDIA_FETCH_JOB = 'media-fetch';
+
+/**
+ * Retry do re-host de mídia inbound WhatsApp: quando o fetch inline falha, a
+ * Message nasce com content.mediaId e este job (delayed, até 3 tentativas)
+ * completa o re-host e emite `message:updated`.
+ */
+export interface MediaFetchJob {
+  orgId: string;
+  channelId: string;
+  messageId: string;
+  mediaId: string;
+}
+
 export interface MessageOutboundJob {
   orgId: string;
   messageId: string;

@@ -9,7 +9,12 @@ import { JwtService } from '@nestjs/jwt';
 import { ChannelStatus, ChannelType, MessageType } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { randomUUID } from 'node:crypto';
-import { toConversationDto, toMessageDto, type MessageDto } from '../common/serializers';
+import {
+  sanitizeMessageForVisitor,
+  toConversationDto,
+  toMessageDto,
+  type MessageDto,
+} from '../common/serializers';
 import { InboundMessageService } from '../inbound/inbound-message.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { QUEUES, type AutomationRunJob } from '../queues/queues.constants';
@@ -32,6 +37,8 @@ export interface WebchatTokenPayload {
 export interface WebchatSessionDto {
   visitorToken: string;
   conversationId: string;
+  /** Nome de exibição da organização — cabeçalho do widget. */
+  orgName: string;
 }
 
 /**
@@ -55,7 +62,7 @@ export class WebchatService {
   async createSession(dto: CreateWebchatSessionDto): Promise<WebchatSessionDto> {
     const org = await this.prisma.prismaSystem.organization.findUnique({
       where: { slug: dto.orgSlug },
-      select: { id: true },
+      select: { id: true, name: true },
     });
     if (!org) {
       throw new NotFoundException('Organização não encontrada');
@@ -107,7 +114,7 @@ export class WebchatService {
       { ...payload },
       { expiresIn: VISITOR_TOKEN_TTL },
     );
-    return { visitorToken, conversationId: conversation.id };
+    return { visitorToken, conversationId: conversation.id, orgName: org.name };
   }
 
   /** POST /api/webchat/messages — pipeline inbound completo (IA, automações, eventos). */
@@ -137,7 +144,7 @@ export class WebchatService {
     if (!message) {
       throw new NotFoundException('Mensagem não encontrada');
     }
-    return { message: toMessageDto(message) };
+    return { message: sanitizeMessageForVisitor(toMessageDto(message)) };
   }
 
   /** GET /api/webchat/messages?after= — mensagens SYSTEM (internas) nunca saem. */
@@ -167,7 +174,7 @@ export class WebchatService {
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       take: query.limit,
     });
-    return { data: messages.map(toMessageDto) };
+    return { data: messages.map((m) => sanitizeMessageForVisitor(toMessageDto(m))) };
   }
 
   /** Valida assinatura + escopo do visitorToken. */

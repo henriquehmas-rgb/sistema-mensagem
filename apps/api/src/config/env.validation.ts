@@ -41,6 +41,9 @@ export function createEnvSchema(nodeEnv: string) {
     META_GRAPH_VERSION: z.string().min(1).default('v21.0'),
 
     PUBLIC_URL: required('http://localhost:3000'),
+
+    // Diretório da mídia inbound re-hospedada (CONTRACTS §6) — compose: /data/media.
+    MEDIA_DIR: z.string().min(1).default('./storage/media'),
   });
 }
 

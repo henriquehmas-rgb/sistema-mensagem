@@ -155,10 +155,10 @@ export interface KnowledgeSourceDto {
 export interface CreateKnowledgeSourceDto {
   type: SourceType;
   name: string;
-  /** Origem por URL (type URL/PDF). */
-  url?: string;
-  /** Conteúdo colado (type TEXT/TABLE). */
-  text?: string;
+  /** Origem por URL (type URL/PDF) — CONTRACTS §6. */
+  contentUrl?: string;
+  /** Conteúdo colado (type TEXT/TABLE) — CONTRACTS §6. */
+  contentText?: string;
 }
 
 // ---------------------------------------------------------------------------

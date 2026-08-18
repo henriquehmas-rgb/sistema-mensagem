@@ -12,6 +12,8 @@ import {
   computeUnreadTotal,
   patchContactInCaches,
   patchConversationInCaches,
+  patchConversationPreviewForMessage,
+  patchMessageInCache,
   patchMessageStatusInCache,
   upsertConversationInCaches,
   upsertMessageInCache,
@@ -108,6 +110,19 @@ export function useRealtimeHandlers(enabled: boolean): void {
       updateInboxTitle(queryClient, onInboxRef.current);
     };
 
+    // Mensagem existente com content atualizado (ex.: re-host de mídia —
+    // mediaId → mediaUrl): patch por id na thread + preview da lista quando
+    // é a última mensagem da conversa. Sem som/toast — não é mensagem nova.
+    const onMessageUpdated = (payload: { message: MessageDto }): void => {
+      const { message } = payload;
+      patchMessageInCache(queryClient, message);
+      patchConversationPreviewForMessage(
+        queryClient,
+        message,
+        getMessagePreview(message),
+      );
+    };
+
     const onMessageStatus = (payload: {
       messageId: string;
       conversationId: string;
@@ -178,6 +193,7 @@ export function useRealtimeHandlers(enabled: boolean): void {
     };
 
     socket.on("message:new", onMessageNew);
+    socket.on("message:updated", onMessageUpdated);
     socket.on("message:status", onMessageStatus);
     socket.on("conversation:new", onConversationNew);
     socket.on("conversation:updated", onConversationUpdated);
@@ -187,6 +203,7 @@ export function useRealtimeHandlers(enabled: boolean): void {
 
     return () => {
       socket.off("message:new", onMessageNew);
+      socket.off("message:updated", onMessageUpdated);
       socket.off("message:status", onMessageStatus);
       socket.off("conversation:new", onConversationNew);
       socket.off("conversation:updated", onConversationUpdated);

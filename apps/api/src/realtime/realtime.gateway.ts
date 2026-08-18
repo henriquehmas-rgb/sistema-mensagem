@@ -139,10 +139,13 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection {
     if (!socket.rooms.has(room)) {
       return;
     }
-    socket.to(room).emit('typing', {
+    const payload = {
       conversationId,
       userId: socket.data.user.userId,
       isTyping: body.isTyping,
-    });
+    };
+    socket.to(room).emit('typing', payload);
+    // Visitante do webchat (namespace /webchat) também vê o "digitando" do agente.
+    this.realtime.relayTypingToWebchat(payload);
   }
 }

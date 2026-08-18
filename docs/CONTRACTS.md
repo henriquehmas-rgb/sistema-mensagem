@@ -50,6 +50,9 @@ Enums em SCREAMING_CASE. Ids: `cuid()`. Timestamps `createdAt`/`updatedAt` em tu
 
 Regras: jobs com `attempts: 3`, backoff exponencial, `removeOnComplete: {count: 1000}`.
 Webhook controller responde **200 imediatamente** e só enfileira. Dedupe por `externalEventId`/`wamid` antes de processar.
+Job extra na fila `webhook-ingest` (job name `media-fetch`, payload `{orgId, channelId, messageId, mediaId}`):
+retry delayed do re-host de mídia inbound WhatsApp (até 3 tentativas) — ao conseguir, atualiza
+`Message.content` (`mediaId` → `mediaUrl`) e emite `message:updated`.
 
 ## 5. Socket.io — namespace `/rt`, path `/socket.io`
 - Auth: JWT no `handshake.auth.token`. Ao conectar, join automático em `org:{orgId}`.
@@ -57,6 +60,8 @@ Webhook controller responde **200 imediatamente** e só enfileira. Dedupe por `e
 - Client→Server: `conversation:join {conversationId}`, `conversation:leave {conversationId}`, `typing {conversationId, isTyping}`
 - Server→Client (sempre com payload completo serializado do recurso):
   - `message:new {message, conversation}`
+  - `message:updated {message}` (mensagem EXISTENTE com content atualizado — ex.: re-host
+    de mídia inbound `mediaId` → `mediaUrl`; clientes fazem patch por id, sem som/toast)
   - `message:status {messageId, conversationId, status}`
   - `conversation:new {conversation}` (inclui contact)
   - `conversation:updated {conversation}` (assignee, stage, status, tags, unread)
@@ -83,7 +88,8 @@ Padrão de resposta: recurso direto; listas `{ data, total, page, pageSize }`. E
 - `GET /dashboard/metrics` (contadores: abertas, por etapa, por agente, tempo médio resposta)
 - **Health público (sem JWT, isento de rate limit, FORA do prefixo `/v1`)**: `GET /api/health` → `{ status: 'ok'|'degraded', db: 'up'|'down', redis: 'up'|'down' }` — sempre HTTP 200; usado pelo healthcheck do Docker (infra/docker-compose.yml) e pelo deploy.sh
 - **Webhooks públicos (sem JWT)**: `GET /api/webhooks/meta` (hub.challenge verify), `POST /api/webhooks/meta` (**validar `X-Hub-Signature-256` HMAC SHA-256 com META_APP_SECRET sobre o raw body**; 200 sempre; enfileirar)
-- **Webchat público**: `POST /api/webchat/session {orgSlug}` → `{visitorToken, conversationId}`; `POST /api/webchat/messages`; `GET /api/webchat/messages?after=`; socket namespace `/webchat` com visitorToken
+- **Webchat público**: `POST /api/webchat/session {orgSlug}` → `{visitorToken, conversationId, orgName}` (**rate limit 10/min** — cria Contact+Conversation reais sem auth); `POST /api/webchat/messages`; `GET /api/webchat/messages?after=`; socket namespace `/webchat` com visitorToken (recebe `message:new {message}`, `message:status` e `typing` do agente; emite `typing {isTyping}` — relayado ao `/rt` como `typing {conversationId, contactId, isTyping}`). Mensagens entregues ao visitante (REST e relay do `/webchat`) SEMPRE com `errorMessage: null` — detalhe interno nunca sai da org (status FAILED basta). Widget embutível: `GET /webchat.js` (loader) + página `/webchat/widget?org=&parent=` (web). **Criação LAZY**: o loader só monta o iframe no primeiro clique na bolha e o widget só chama `POST /session` na PRIMEIRA mensagem do visitante — pageview/abertura nunca criam contato/conversa nem disparam automações. Canal WEBCHAT: `config.orgSlug` é server-autoritativo (a api grava o slug real da org; valor divergente → 400).
+- **Mídia re-hospedada (pública, sem JWT, isenta de rate limit, FORA do `/v1`)**: `GET /api/media/:orgId/:arquivo` — serve a mídia inbound baixada da Meta (WhatsApp; env `MEDIA_DIR`, layout `{orgId}/{arquivo}`). Content-Type derivado da extensão (SVG nunca é servido), `Cache-Control: public, max-age=31536000, immutable`, `X-Content-Type-Options: nosniff`. Anti path-traversal: regex estrita nos dois segmentos (`orgId` = cuid; arquivo = 32 hex + extensão curta) + resolução absoluta com verificação de prefixo de `MEDIA_DIR` (violação → 400; inexistente → 404). **Segurança MVP**: URL não-adivinhável — nome de arquivo com 128 bits aleatórios (`{hex-128-bits}.{ext}`); o link é o segredo, sem auth adicional. Upload/anexos novos (webchat/agente) permanecem fora de escopo.
 
 ## 7. Serviço de IA (FastAPI) — interno, auth header `X-Service-Token: ${AI_SERVICE_TOKEN}`
 - `POST /ingest {org_id, source_id, type, content_url?|content_text?, meta}` → processa async, chunking + embeddings + upsert pgvector, callback `PATCH api /internal/knowledge/:id/status` (ou atualiza direto no banco — decisão: **atualiza direto no Postgres**, mesma DATABASE_URL)
@@ -105,13 +111,15 @@ AI_PROVIDER=mock  OPENAI_API_KEY=  ANTHROPIC_API_KEY=  GOOGLE_API_KEY=
 META_APP_SECRET=  META_VERIFY_TOKEN=  META_GRAPH_VERSION=v21.0
 PUBLIC_URL=https://chat.srv1450678.hstgr.cloud
 NEXT_PUBLIC_API_URL=/api/v1  NEXT_PUBLIC_SOCKET_PATH=/socket.io
+MEDIA_DIR=./storage/media  (opcional; docker-compose define /data/media, volume media_data)
 ```
 
 ## 9. Segurança / Multitenancy (obrigatório)
 - JWT payload: `{ sub: userId, orgId, role }`. RBAC via decorator `@Roles()` + guard.
 - **Prisma Client Extension** com AsyncLocalStorage: toda query de modelos tenant recebe `where { orgId }` injetado automaticamente; criação injeta `orgId`. Bypass explícito só em código de webhook/system com `prismaSystem`.
 - Credenciais de canal: AES-256-GCM (`APP_ENCRYPTION_KEY`), IV aleatório por registro, nunca logadas nem retornadas em API.
-- Rate limit no gateway (`@nestjs/throttler`): auth 5/min, webhooks e `GET /api/health` isentos, demais 120/min.
+- Rate limit no gateway (`@nestjs/throttler`): auth 5/min, `POST /api/webchat/session` 10/min, webhooks e `GET /api/health` isentos, demais 120/min.
+- Anti-framing (web/Next `headers()`): `X-Frame-Options: DENY` + CSP `frame-ancestors 'none'` em TODAS as rotas do web, EXCETO `/webchat/widget` (embutível por design — `frame-ancestors *` explícito).
 - Senhas: argon2id. Headers: helmet. CORS: PUBLIC_URL apenas.
 - Validação: class-validator em TODOS os DTOs, `whitelist: true, forbidNonWhitelisted: true`.
 

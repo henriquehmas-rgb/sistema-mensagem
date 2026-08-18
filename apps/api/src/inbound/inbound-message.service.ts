@@ -34,6 +34,8 @@ export interface InboundIngestInput {
   externalContactId: string;
   contactName?: string;
   contactPhone?: string;
+  /** Avatar do perfil no canal (ex.: profile_pic do IG) — só usado ao criar o contato. */
+  contactAvatarUrl?: string;
   /** wamid — dedupe via unique(orgId, externalId) de Message. */
   externalMessageId?: string;
   type: MessageType;
@@ -200,7 +202,12 @@ export class InboundMessageService {
   async ensureContact(
     input: Pick<
       InboundIngestInput,
-      'orgId' | 'channelType' | 'externalContactId' | 'contactName' | 'contactPhone'
+      | 'orgId'
+      | 'channelType'
+      | 'externalContactId'
+      | 'contactName'
+      | 'contactPhone'
+      | 'contactAvatarUrl'
     >,
   ): Promise<Contact> {
     const identity = await this.prisma.prismaSystem.contactIdentity.findUnique({
@@ -316,7 +323,10 @@ export class InboundMessageService {
   }
 
   private async findOrCreateContact(
-    input: Pick<InboundIngestInput, 'orgId' | 'externalContactId' | 'contactName' | 'contactPhone'>,
+    input: Pick<
+      InboundIngestInput,
+      'orgId' | 'externalContactId' | 'contactName' | 'contactPhone' | 'contactAvatarUrl'
+    >,
   ): Promise<Contact> {
     const phone = input.contactPhone ?? null;
     if (phone) {
@@ -334,6 +344,7 @@ export class InboundMessageService {
           orgId: input.orgId,
           name: input.contactName?.trim() || phone || DEFAULT_CONTACT_NAME,
           phone,
+          avatarUrl: input.contactAvatarUrl ?? null,
         },
       });
     } catch (error) {
