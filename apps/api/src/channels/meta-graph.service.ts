@@ -5,7 +5,10 @@ import type { Env } from '../config/env.validation';
 import { CryptoService } from '../crypto/crypto.service';
 
 const GRAPH_BASE_URL = 'https://graph.facebook.com';
+const GRAPH_HOST_PREFIX = `${GRAPH_BASE_URL}/`;
 const REQUEST_TIMEOUT_MS = 10_000;
+/** Teto de páginas ao seguir `paging.next` — guarda contra loop infinito (CONTRACTS §12). */
+const MAX_TEMPLATE_SYNC_PAGES = 50;
 
 /** Credenciais de canal Meta após decrypt (chaves livres; estas são as usadas). */
 export interface MetaChannelCredentials {
@@ -17,6 +20,17 @@ export interface MetaChannelCredentials {
 
 export interface GraphSendResult {
   externalId: string; // wamid (WhatsApp) | message_id (Instagram)
+}
+
+/** Forma crua de um item retornado por GET /{wabaId}/message_templates (CONTRACTS §12). */
+export interface RawMetaTemplate {
+  name: string;
+  language: string;
+  status: string;
+  category: string;
+  components: unknown[];
+  id?: string;
+  [key: string]: unknown;
 }
 
 /** Perfil público de um usuário IG (best-effort; campos podem faltar). */
@@ -54,12 +68,15 @@ interface GraphErrorBody {
 export class MetaGraphService {
   private readonly logger = new Logger(MetaGraphService.name);
   private readonly graphVersion: string;
+  /** Host público único (web+api via Traefik, CONTRACTS §2) — resolve mediaUrl relativo. */
+  private readonly publicUrl: string;
 
   constructor(
     config: ConfigService<Env, true>,
     private readonly crypto: CryptoService,
   ) {
     this.graphVersion = config.get('META_GRAPH_VERSION', { infer: true });
+    this.publicUrl = config.get('PUBLIC_URL', { infer: true });
   }
 
   /** Decripta e parseia as credenciais do canal; null se ausentes/corrompidas. */
@@ -94,9 +111,67 @@ export class MetaGraphService {
   }
 
   /**
+   * Sincroniza os templates de mensagem do WABA (CONTRACTS §12):
+   * GET /{wabaId}/message_templates?fields=name,language,status,category,components,
+   * seguindo `paging.next` até esgotar as páginas. Retorna a lista crua (upsert
+   * e cálculo de bodyParamsCount ficam no TemplatesService).
+   *
+   * Endurecido contra resposta adulterada/paginação sem fim: `paging.next`
+   * só é seguido se o host continuar `graph.facebook.com` (senão o
+   * accessToken do canal vazaria como Bearer para um host arbitrário) e o
+   * loop aborta após `MAX_TEMPLATE_SYNC_PAGES` páginas.
+   */
+  async syncTemplates(
+    credentials: MetaChannelCredentials,
+    wabaId: string,
+  ): Promise<RawMetaTemplate[]> {
+    const accessToken = typeof credentials.accessToken === 'string' ? credentials.accessToken : '';
+    if (!accessToken || !wabaId) {
+      throw new GraphPermanentError(
+        'Credenciais incompletas: accessToken e wabaId são obrigatórios',
+      );
+    }
+
+    const templates: RawMetaTemplate[] = [];
+    let next: string | null =
+      `/${wabaId}/message_templates?fields=name,language,status,category,components&limit=100`;
+    let pages = 0;
+
+    while (next) {
+      pages += 1;
+      if (pages > MAX_TEMPLATE_SYNC_PAGES) {
+        throw new Error(
+          `Sincronização de templates excedeu ${MAX_TEMPLATE_SYNC_PAGES} páginas — abortando (paginação sem fim?)`,
+        );
+      }
+
+      const response = await this.graphFetch(next, accessToken, { method: 'GET' });
+      if (!response.ok) {
+        throw new Error(await this.describeGraphError(response));
+      }
+      const body = (await response.json()) as {
+        data?: RawMetaTemplate[];
+        paging?: { next?: string };
+      };
+      templates.push(...(body.data ?? []));
+
+      const rawNext = body.paging?.next ?? null;
+      if (rawNext && rawNext.startsWith('http') && !rawNext.startsWith(GRAPH_HOST_PREFIX)) {
+        throw new Error(
+          `paging.next apontou para um host inesperado (esperado ${GRAPH_HOST_PREFIX}) — abortando por segurança`,
+        );
+      }
+      next = rawNext;
+    }
+
+    return templates;
+  }
+
+  /**
    * Envia uma mensagem OUTBOUND via WhatsApp Cloud API.
    * Suporta TEXT, mídia por link (IMAGE/AUDIO/VIDEO/DOCUMENT/STICKER), LOCATION
-   * e TEMPLATE ({templateName, params}). Tipos sem mapeamento → GraphPermanentError.
+   * e TEMPLATE ({templateName, language, params}). Tipos sem mapeamento →
+   * GraphPermanentError.
    */
   async sendWhatsAppMessage(
     credentials: MetaChannelCredentials,
@@ -206,7 +281,9 @@ export class MetaGraphService {
     content: Record<string, unknown>,
   ): Record<string, unknown> {
     const text = typeof content.text === 'string' ? content.text : '';
-    const mediaUrl = typeof content.mediaUrl === 'string' ? content.mediaUrl : '';
+    const mediaUrl = this.resolveMediaUrl(
+      typeof content.mediaUrl === 'string' ? content.mediaUrl : '',
+    );
     const attachment = (attachmentType: 'image' | 'audio' | 'video' | 'file') => ({
       attachment: { type: attachmentType, payload: { url: mediaUrl } },
     });
@@ -250,7 +327,9 @@ export class MetaGraphService {
     content: Record<string, unknown>,
   ): Record<string, unknown> {
     const text = typeof content.text === 'string' ? content.text : '';
-    const mediaUrl = typeof content.mediaUrl === 'string' ? content.mediaUrl : '';
+    const mediaUrl = this.resolveMediaUrl(
+      typeof content.mediaUrl === 'string' ? content.mediaUrl : '',
+    );
     const caption = typeof content.caption === 'string' ? content.caption : undefined;
 
     switch (type) {
@@ -283,8 +362,10 @@ export class MetaGraphService {
           type: 'template',
           template: {
             name: typeof content.templateName === 'string' ? content.templateName : '',
+            // CONTRACTS §12: o campo é `language` (packages/shared/src/models.ts),
+            // NÃO `languageCode` — fallback pt_BR mantido quando ausente.
             language: {
-              code: typeof content.languageCode === 'string' ? content.languageCode : 'pt_BR',
+              code: typeof content.language === 'string' ? content.language : 'pt_BR',
             },
             ...(params.length > 0
               ? {
@@ -321,8 +402,34 @@ export class MetaGraphService {
     return { accessToken, phoneNumberId };
   }
 
+  /**
+   * Resolve `content.mediaUrl` para uma URL ABSOLUTA antes de montar o payload
+   * da Graph API (crítico — sem isso, envio de anexo por upload quebra 100%
+   * em WhatsApp/Instagram): `MediaService.storeUpload`/o re-host inbound
+   * (CONTRACTS §6/§13) devolvem um caminho relativo same-origin
+   * (`/api/media/{orgId}/...`) pensado para o browser do agente/composer, que
+   * resolve relativo ao próprio host. Os servidores da Meta, porém, baixam a
+   * mídia deles mesmos — um link sem scheme/host não é resolvível para eles.
+   * `PUBLIC_URL` é o ÚNICO host público que serve web+api via Traefik
+   * (CONTRACTS §2), então prefixá-lo é suficiente. URLs já absolutas (aba "Por
+   * URL" do composer, sempre http(s) por `isHttpUrl`) passam intactas.
+   */
+  private resolveMediaUrl(mediaUrl: string): string {
+    if (!mediaUrl || /^https?:\/\//i.test(mediaUrl)) {
+      return mediaUrl;
+    }
+    const base = this.publicUrl.replace(/\/+$/, '');
+    const path = mediaUrl.startsWith('/') ? mediaUrl : `/${mediaUrl}`;
+    return `${base}${path}`;
+  }
+
+  /**
+   * `path` pode ser um caminho relativo (`/…`) ou uma URL absoluta — usada ao
+   * seguir `paging.next` da Graph API, que já vem com host/versão/query completos.
+   */
   private graphFetch(path: string, accessToken: string, init: RequestInit): Promise<Response> {
-    return fetch(`${GRAPH_BASE_URL}/${this.graphVersion}${path}`, {
+    const url = path.startsWith('http') ? path : `${GRAPH_BASE_URL}/${this.graphVersion}${path}`;
+    return fetch(url, {
       ...init,
       headers: {
         ...(init.headers as Record<string, string> | undefined),

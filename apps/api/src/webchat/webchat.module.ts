@@ -3,10 +3,12 @@ import { ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import type { Env } from '../config/env.validation';
 import { InboundModule } from '../inbound/inbound.module';
+import { MediaModule } from '../media/media.module';
 import { QueueModule } from '../queues/queue.module';
 import { WebchatController } from './webchat.controller';
 import { WebchatGateway } from './webchat.gateway';
 import { WebchatService } from './webchat.service';
+import { WebchatUploadGuard } from './webchat-upload.guard';
 
 /**
  * Webchat público (CONTRACTS §6): sessão de visitante, envio/polling de
@@ -23,8 +25,9 @@ import { WebchatService } from './webchat.service';
     }),
     QueueModule,
     InboundModule,
+    MediaModule,
   ],
   controllers: [WebchatController],
-  providers: [WebchatService, WebchatGateway],
+  providers: [WebchatService, WebchatGateway, WebchatUploadGuard],
 })
 export class WebchatModule {}

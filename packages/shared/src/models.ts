@@ -138,6 +138,37 @@ export interface CreateChannelDto {
 }
 
 // ---------------------------------------------------------------------------
+// Templates WhatsApp (docs/CONTRACTS.md §12) — sincronizados via Graph API
+// ---------------------------------------------------------------------------
+
+export type TemplateCategory = "MARKETING" | "UTILITY" | "AUTHENTICATION";
+
+export type TemplateStatus = "APPROVED" | "PENDING" | "REJECTED" | "PAUSED" | "DISABLED";
+
+/** Estrutura crua de um componente de template (header/body/footer/buttons). */
+export interface TemplateComponent {
+  type: "HEADER" | "BODY" | "FOOTER" | "BUTTONS" | string;
+  format?: string;
+  text?: string;
+  buttons?: unknown[];
+  [key: string]: unknown;
+}
+
+export interface MessageTemplateDto {
+  id: string;
+  orgId: string;
+  channelId: string;
+  name: string;
+  language: string;
+  category: TemplateCategory;
+  status: TemplateStatus;
+  components: TemplateComponent[];
+  bodyParamsCount: number;
+  lastSyncedAt: string | null;
+  createdAt: string;
+}
+
+// ---------------------------------------------------------------------------
 // Base de conhecimento (RAG)
 // ---------------------------------------------------------------------------
 
@@ -200,14 +231,15 @@ export interface AutomationCondition {
   value: string;
 }
 
+// Alinhado com apps/api/src/automations/automation.types.ts (AutomationAction) —
+// o payload é enviado sem transformação ao POST/PATCH /automations (CONTRACTS §12).
+// `send_template` referencia o MessageTemplate por `templateId` (não por nome —
+// nomes colidem entre canais/idiomas diferentes).
 export type AutomationAction =
-  | { type: "assign_agent"; agentId: string }
+  | { type: "assign"; userId: string }
   | { type: "add_tag"; tagId: string }
   | { type: "move_stage"; stageId: string }
-  | { type: "send_text"; text: string }
-  | { type: "send_template"; templateName: string; params?: string[] }
-  | { type: "call_webhook"; url: string }
-  | { type: "notify_agents" };
+  | { type: "send_template"; templateId: string; params?: string[] };
 
 export type AutomationActionType = AutomationAction["type"];
 

@@ -1,7 +1,15 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
-import { RunStatus, type Automation, type Prisma } from '@prisma/client';
-import type { Job } from 'bullmq';
+import {
+  MessageDirection,
+  MessageStatus,
+  MessageType,
+  RunStatus,
+  TemplateStatus,
+  type Automation,
+  type Prisma,
+} from '@prisma/client';
+import { Queue, type Job } from 'bullmq';
 import {
   evaluateCondition,
   parseAction,
@@ -9,17 +17,28 @@ import {
   parseTrigger,
   type AutomationAction,
 } from '../../automations/automation.types';
-import { conversationInclude, toConversationDto } from '../../common/serializers';
+import {
+  conversationInclude,
+  messageInclude,
+  messagePreview,
+  toConversationDto,
+  toMessageDto,
+} from '../../common/serializers';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RealtimeService } from '../../realtime/realtime.service';
-import { QUEUES, type AutomationRunJob } from '../queues.constants';
+import { QUEUES, type AutomationRunJob, type MessageOutboundJob } from '../queues.constants';
 
 /**
  * Processor `automation-run` (CONTRACTS §4): motor de automações.
  * Carrega as Automations habilitadas da org cujo trigger.event case com o
  * evento, avalia conditions sobre o context e executa actions na conversa
- * (assign, add_tag, move_stage, set_status, disable_ai). Cada execução grava
- * AutomationRun {status, log, durationMs} e incrementa runCount.
+ * (assign, add_tag, move_stage, set_status, disable_ai, send_template).
+ * `send_template` (CONTRACTS §12) resolve o MessageTemplate por
+ * (id, orgId, channelId da conversa), valida status APPROVED e
+ * params.length===bodyParamsCount, cria a Message OUTBOUND PENDING e
+ * enfileira `message-outbound` — mesma trilha de MessagesService.send.
+ * Cada execução grava AutomationRun {status, log, durationMs} e incrementa
+ * runCount.
  * Sem contexto de request → prismaSystem SEMPRE filtrando orgId do payload;
  * toda entidade referenciada por action é validada contra a org antes de aplicar.
  */
@@ -30,6 +49,8 @@ export class AutomationRunProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
+    @InjectQueue(QUEUES.MESSAGE_OUTBOUND)
+    private readonly messageOutboundQueue: Queue<MessageOutboundJob>,
   ) {
     super();
   }
@@ -109,7 +130,7 @@ export class AutomationRunProcessor extends WorkerHost {
   ): Promise<Array<{ type: string; applied: boolean; detail?: string }>> {
     const conversation = await this.prisma.prismaSystem.conversation.findFirst({
       where: { id: conversationId, orgId },
-      select: { id: true },
+      select: { id: true, channelId: true },
     });
     if (!conversation) {
       return [{ type: '*', applied: false, detail: 'conversa não encontrada na org' }];
@@ -124,7 +145,9 @@ export class AutomationRunProcessor extends WorkerHost {
         results.push({ type: 'unknown', applied: false, detail: 'action com forma inválida' });
         continue;
       }
-      results.push(await this.executeAction(orgId, conversationId, action));
+      results.push(
+        await this.executeAction(orgId, conversationId, conversation.channelId, action),
+      );
     }
     return results;
   }
@@ -132,6 +155,7 @@ export class AutomationRunProcessor extends WorkerHost {
   private async executeAction(
     orgId: string,
     conversationId: string,
+    channelId: string,
     action: AutomationAction,
   ): Promise<{ type: string; applied: boolean; detail?: string }> {
     switch (action.type) {
@@ -190,6 +214,105 @@ export class AutomationRunProcessor extends WorkerHost {
           data: { aiEnabled: false },
         });
         return { type: action.type, applied: true };
+      case 'send_template': {
+        const template = await this.prisma.prismaSystem.messageTemplate.findFirst({
+          where: { id: action.templateId, orgId, channelId },
+        });
+        if (!template) {
+          return {
+            type: action.type,
+            applied: false,
+            detail: 'template inexistente para o canal da conversa',
+          };
+        }
+        if (template.status !== TemplateStatus.APPROVED) {
+          return { type: action.type, applied: false, detail: 'template não está aprovado' };
+        }
+        const params = action.params ?? [];
+        if (params.length !== template.bodyParamsCount) {
+          return {
+            type: action.type,
+            applied: false,
+            detail: `esperado ${template.bodyParamsCount} parâmetro(s), recebido ${params.length}`,
+          };
+        }
+
+        const applied = await this.sendTemplateMessage(orgId, conversationId, {
+          templateName: template.name,
+          language: template.language,
+          ...(params.length > 0 ? { params } : {}),
+        });
+        return { type: action.type, applied };
+      }
+    }
+  }
+
+  /**
+   * Cria a Message OUTBOUND PENDING (mesma trilha de MessagesService.send/
+   * AiReplyProcessor.handleReply) e enfileira `message-outbound` — a action
+   * só é `applied:true` depois de a entrega ser enfileirada com sucesso.
+   */
+  private async sendTemplateMessage(
+    orgId: string,
+    conversationId: string,
+    content: { templateName: string; language: string; params?: string[] },
+  ): Promise<boolean> {
+    const message = await this.prisma.prismaSystem.$transaction(async (tx) => {
+      const created = await tx.message.create({
+        data: {
+          orgId,
+          conversationId,
+          direction: MessageDirection.OUTBOUND,
+          type: MessageType.TEMPLATE,
+          content: content as Prisma.InputJsonValue,
+          status: MessageStatus.PENDING,
+        },
+        include: messageInclude,
+      });
+      await tx.conversation.update({
+        where: { id: conversationId },
+        data: {
+          lastMessageAt: created.createdAt,
+          lastMessagePreview: messagePreview(MessageType.TEMPLATE, content),
+        },
+      });
+      return created;
+    });
+
+    try {
+      await this.messageOutboundQueue.add('deliver', { orgId, messageId: message.id });
+    } catch (error) {
+      this.logger.error(
+        `Falha ao enfileirar message-outbound (action send_template, message=${message.id}): ${(error as Error).message}`,
+      );
+      await this.prisma.prismaSystem.message.update({
+        where: { id: message.id },
+        data: {
+          status: MessageStatus.FAILED,
+          errorMessage: 'Falha ao enfileirar a entrega (fila indisponível)',
+        },
+      });
+      return false;
+    }
+
+    await this.emitMessageNew(orgId, conversationId, message);
+    return true;
+  }
+
+  private async emitMessageNew(
+    orgId: string,
+    conversationId: string,
+    message: Parameters<typeof toMessageDto>[0],
+  ): Promise<void> {
+    const conversation = await this.prisma.prismaSystem.conversation.findFirst({
+      where: { id: conversationId, orgId },
+      include: conversationInclude,
+    });
+    if (conversation) {
+      this.realtime.emitMessageNew(orgId, {
+        message: toMessageDto(message),
+        conversation: toConversationDto(conversation),
+      });
     }
   }
 

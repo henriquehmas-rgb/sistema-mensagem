@@ -73,8 +73,8 @@ export class MessagesService {
    * enfileira `message-outbound` (CONTRACTS §4/§6).
    */
   async send(conversationId: string, dto: CreateMessageDto, actor: AuthUser): Promise<MessageDto> {
-    await this.assertConversation(conversationId);
-    this.validateContent(dto.type, dto.content);
+    const conversation = await this.assertConversation(conversationId);
+    await this.validateContent(dto.type, dto.content, conversation.channelId);
 
     const preview = messagePreview(dto.type, dto.content);
     const message = await this.prisma.tenant.$transaction(async (tx) => {
@@ -153,7 +153,11 @@ export class MessagesService {
   }
 
   /** Coerência mínima content×type — o restante é responsabilidade do canal. */
-  private validateContent(type: MessageType, content: Record<string, unknown>): void {
+  private async validateContent(
+    type: MessageType,
+    content: Record<string, unknown>,
+    channelId: string,
+  ): Promise<void> {
     const requireString = (key: string): void => {
       const value = content[key];
       if (typeof value !== 'string' || value.trim().length === 0) {
@@ -186,22 +190,48 @@ export class MessagesService {
           throw new BadRequestException('content.latitude/longitude são obrigatórios para LOCATION');
         }
         return;
-      case MessageType.TEMPLATE:
+      case MessageType.TEMPLATE: {
         requireString('templateName');
+        // CONTRACTS §12: `language` é obrigatório de fato — cada (name, language) é
+        // um template distinto na Meta; sem isso, meta-graph.service.ts cai
+        // silenciosamente no fallback pt_BR (bug já corrigido lá, mas o client
+        // deveria ter que ser explícito).
+        requireString('language');
+        const templateName = content.templateName as string;
+        const language = content.language as string;
+        const template = await this.prisma.tenant.messageTemplate.findFirst({
+          where: { channelId, name: templateName, language },
+          select: { bodyParamsCount: true },
+        });
+        if (!template) {
+          throw new BadRequestException(
+            `Template "${templateName}" (${language}) não encontrado para este canal — sincronize em Configurações → Canais → Templates`,
+          );
+        }
+        const params = Array.isArray(content.params) ? content.params : [];
+        if (params.length !== template.bodyParamsCount) {
+          throw new BadRequestException(
+            `content.params deve ter ${template.bodyParamsCount} item(ns) para este template (recebido ${params.length})`,
+          );
+        }
         return;
+      }
       case MessageType.SYSTEM:
         // bloqueado no DTO (@NotEquals) — defesa em profundidade
         throw new BadRequestException('mensagens SYSTEM são geradas pelo servidor');
     }
   }
 
-  private async assertConversation(conversationId: string): Promise<void> {
+  private async assertConversation(
+    conversationId: string,
+  ): Promise<{ id: string; channelId: string }> {
     const conversation = await this.prisma.tenant.conversation.findUnique({
       where: { id: conversationId },
-      select: { id: true },
+      select: { id: true, channelId: true },
     });
     if (!conversation) {
       throw new NotFoundException('Conversa não encontrada');
     }
+    return conversation;
   }
 }

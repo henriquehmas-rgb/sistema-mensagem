@@ -180,6 +180,46 @@ async function request<T>(
   return (text.length > 0 ? (JSON.parse(text) as T) : (undefined as T));
 }
 
+/**
+ * multipart/form-data (upload de arquivo — CONTRACTS §13): NUNCA define
+ * Content-Type manualmente (o browser define o boundary do multipart
+ * sozinho); mesmo refresh single-flight em 401 do `request()` acima.
+ */
+async function uploadRequest<T>(path: string, formData: FormData, isRetry = false): Promise<T> {
+  const headers = new Headers();
+  const token = useAuthStore.getState().accessToken;
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
+  let response: Response;
+  try {
+    response = await fetch(buildUrl(path), { method: "POST", headers, body: formData });
+  } catch {
+    throw new ApiError(0);
+  }
+
+  if (response.status === 401 && !isRetry) {
+    const newToken = await refreshSession();
+    if (newToken) {
+      return uploadRequest<T>(path, formData, true);
+    }
+    useAuthStore.getState().clearSession();
+    throw new ApiError(401, { statusCode: 401, message: "Sessão expirada" });
+  }
+
+  if (!response.ok) {
+    let body: Partial<ApiErrorBody> | undefined;
+    try {
+      body = (await response.json()) as Partial<ApiErrorBody>;
+    } catch {
+      body = undefined;
+    }
+    throw new ApiError(response.status, body);
+  }
+
+  const text = await response.text();
+  return (text.length > 0 ? (JSON.parse(text) as T) : (undefined as T));
+}
+
 /** Cliente HTTP tipado da API (`/api/v1`, JWT Bearer, refresh automático em 401). */
 export const api = {
   get: <T>(path: string, options?: RequestOptions): Promise<T> =>
@@ -192,4 +232,5 @@ export const api = {
     request<T>("PUT", path, options),
   delete: <T>(path: string, options?: RequestOptions): Promise<T> =>
     request<T>("DELETE", path, options),
+  upload: <T>(path: string, formData: FormData): Promise<T> => uploadRequest<T>(path, formData),
 } as const;

@@ -15,7 +15,7 @@ import {
  * (Json no schema) são validadas em profundidade no AutomationsService:
  * - trigger: { event: AutomationEvent }
  * - conditions: [{ field, op: eq|neq|contains|exists|not_exists, value? }]
- * - actions: [{ type: assign|add_tag|move_stage|set_status|disable_ai, ... }]
+ * - actions: [{ type: assign|add_tag|move_stage|set_status|disable_ai|send_template, ... }]
  */
 export class CreateAutomationDto {
   @IsString()

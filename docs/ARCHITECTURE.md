@@ -53,8 +53,13 @@ e um job delayed `media-fetch` (mesma fila, até 3 tentativas) completa o re-hos
 direto em `content.mediaUrl`.
 
 ## Limitações conhecidas (corte de escopo auditável)
-- **Upload de mídia (webchat/anexos do agente)**: nenhum endpoint de upload novo — o
-  re-host acima cobre apenas mídia INBOUND do WhatsApp; anexos OUTBOUND continuam por URL.
+- **Upload de mídia outbound (agente/webchat)**: implementado (CONTRACTS §13) — `POST /uploads`
+  (agente, JWT) e `POST /webchat/uploads` (visitante, visitorToken) reaproveitam a mesma raiz
+  `MEDIA_DIR` do re-host inbound acima, em `MEDIA_DIR/{orgId}/uploads/`. Validação de mime
+  aceita o Content-Type reportado pelo multer/navegador (mimetype do cliente) mais uma checagem
+  de assinatura binária (magic bytes) só para os formatos com assinatura simples e inequívoca
+  (imagens comuns + PDF) — áudio/vídeo/Office não têm essa camada extra de verificação (mimetype
+  do cliente é aceito como está para esses).
 
 ## Deploy
 - VPS `/docker/sistema-mensagem/` via git clone + `docker compose up -d --build`.

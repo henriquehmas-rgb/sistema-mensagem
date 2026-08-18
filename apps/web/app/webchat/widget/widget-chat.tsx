@@ -15,7 +15,9 @@ import {
   CheckCheck,
   Clock,
   FileText,
+  Loader2,
   MessageCircle,
+  Paperclip,
   RefreshCw,
   Send,
   Volume2,
@@ -27,12 +29,16 @@ import { io, type Socket } from "socket.io-client";
 import type { MessageDto, MessageStatus } from "@sm/shared";
 
 import {
+  MAX_UPLOAD_BYTES,
   URL_SPLIT_REGEX,
+  formatFileSize,
   formatMessageTime,
   getMessagePreview,
+  isAllowedUploadMime,
   isHttpUrl,
   isMediaContent,
   isTextContent,
+  messageTypeForMime,
 } from "@/lib/inbox/utils";
 import { cn } from "@/lib/utils";
 
@@ -83,6 +89,32 @@ class HttpError extends Error {
     super(`HTTP ${status}`);
     this.name = "HttpError";
   }
+}
+
+/** Resposta de POST /api/webchat/uploads (CONTRACTS §13). */
+interface UploadedMediaDto {
+  mediaUrl: string;
+  mimeType: string;
+  filename: string;
+  sizeBytes: number;
+}
+
+/** multipart/form-data — NUNCA define Content-Type (o browser define o boundary sozinho). */
+async function uploadFile(path: string, token: string, file: File): Promise<UploadedMediaDto> {
+  const formData = new FormData();
+  formData.append("file", file);
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
+  } catch {
+    throw new HttpError(0);
+  }
+  if (!response.ok) throw new HttpError(response.status);
+  return (await response.json()) as UploadedMediaDto;
 }
 
 async function requestJson<T>(
@@ -371,6 +403,8 @@ export function WidgetChat({ org, parentOrigin }: { org: string; parentOrigin: s
   const [agentTyping, setAgentTyping] = useState(false);
   const [muted, setMuted] = useState(false);
   const [embedded, setEmbedded] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const socketRef = useRef<WebchatSocket | null>(null);
   const sessionRef = useRef<SessionInfo | null>(null);
@@ -389,6 +423,7 @@ export function WidgetChat({ org, parentOrigin }: { org: string; parentOrigin: s
   const tempSeqRef = useRef(0);
   const listRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const orgName = session?.orgName || prettifySlug(org) || "Atendimento";
 
@@ -714,6 +749,55 @@ export function WidgetChat({ org, parentOrigin }: { org: string; parentOrigin: s
     [ensureSession, org],
   );
 
+  /**
+   * Anexo enviado pelo visitante (CONTRACTS §13): upload via
+   * POST /api/webchat/uploads (mesmo visitorToken de ensureSession — cria a
+   * sessão na hora se o anexo for a PRIMEIRA ação do visitante), depois
+   * POST /api/webchat/messages com a mediaUrl retornada. Sem bolha otimista
+   * (a mídia só existe depois do upload) — feedback é o spinner no botão +
+   * a barra indeterminada abaixo do composer.
+   */
+  const sendMedia = useCallback(
+    async (file: File) => {
+      setUploadError(null);
+      if (file.size > MAX_UPLOAD_BYTES) {
+        setUploadError(`Arquivo muito grande (${formatFileSize(file.size)}) — limite de 20 MB.`);
+        return;
+      }
+      if (!isAllowedUploadMime(file.type)) {
+        setUploadError("Tipo de arquivo não suportado.");
+        return;
+      }
+
+      setUploading(true);
+      try {
+        const active = await ensureSession();
+        const uploaded = await uploadFile(`${API_BASE}/uploads`, active.visitorToken, file);
+        const res = await requestJson<{ message: MessageDto }>(`${API_BASE}/messages`, {
+          method: "POST",
+          token: active.visitorToken,
+          body: {
+            type: messageTypeForMime(uploaded.mimeType),
+            mediaUrl: uploaded.mediaUrl,
+            mimeType: uploaded.mimeType,
+            filename: uploaded.filename,
+          },
+        });
+        setMessages((prev) => mergeServerMessage(prev, res.message));
+      } catch (error) {
+        if (error instanceof HttpError && error.status === 401) {
+          writeStoredSession(org, null);
+          sessionRef.current = null;
+          setSession(null);
+        }
+        setUploadError("Falha ao enviar o arquivo. Tente novamente.");
+      } finally {
+        setUploading(false);
+      }
+    },
+    [ensureSession, org],
+  );
+
   const handleSubmit = useCallback(
     (event?: FormEvent) => {
       event?.preventDefault();
@@ -909,6 +993,31 @@ export function WidgetChat({ org, parentOrigin }: { org: string; parentOrigin: s
       {/* ---------------------------------------------------------- composer */}
       <div className="shrink-0 border-t border-border bg-card px-3 pb-2 pt-2.5">
         <form onSubmit={handleSubmit} className="flex items-end gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            accept="image/*,audio/*,video/mp4,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (file) void sendMedia(file);
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={status !== "ready" || uploading}
+            aria-label="Enviar arquivo"
+            title="Enviar arquivo"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted disabled:opacity-40"
+          >
+            {uploading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Paperclip className="h-4 w-4" />
+            )}
+          </button>
           <textarea
             ref={inputRef}
             value={input}
@@ -936,6 +1045,17 @@ export function WidgetChat({ org, parentOrigin }: { org: string; parentOrigin: s
             <Send className="h-4 w-4" />
           </button>
         </form>
+        {uploading ? (
+          <span className="mt-1.5 block h-0.5 w-full overflow-hidden rounded-full bg-muted">
+            <span className="block h-full w-full animate-pulse rounded-full bg-primary/70" />
+          </span>
+        ) : null}
+        {uploadError ? (
+          <p className="mt-1.5 flex items-center gap-1 text-[11px] text-status-failed">
+            <AlertCircle className="h-3 w-3 shrink-0" aria-hidden />
+            {uploadError}
+          </p>
+        ) : null}
         <p className="mt-1.5 text-center text-[10px] text-muted-foreground/70">
           Atendimento por <span className="font-medium">SEEG Omni</span>
         </p>

@@ -9,6 +9,7 @@ export const QUEUES = {
   AI_REPLY: 'ai-reply',
   AUTOMATION_RUN: 'automation-run',
   KNOWLEDGE_INGEST: 'knowledge-ingest',
+  MEDIA_CLEANUP: 'media-cleanup',
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
@@ -73,3 +74,10 @@ export interface KnowledgeIngestJob {
   orgId: string;
   sourceId: string;
 }
+
+/**
+ * Job repetível `media-cleanup` (CONTRACTS §13, correção de revisão — high):
+ * sem payload — cada execução varre TODAS as orgs em MEDIA_DIR/*\/uploads/
+ * (MediaCleanupService.run). Agendado por MediaCleanupScheduler.
+ */
+export type MediaCleanupJob = Record<string, never>;

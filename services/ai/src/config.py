@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     ai_service_token: str = ""
     ai_provider: AiProvider = "mock"
 
+    # Rastreamento de erros (CONTRACTS §14) — opcional; vazio = sentry-sdk
+    # nem e importado (ver src/observability.py). Mesmo nome de env var do
+    # servico api (SENTRY_DSN), whitelisted separadamente para o container
+    # ai em infra/docker-compose.yml.
+    sentry_dsn: str = ""
+
     openai_api_key: str = ""
     anthropic_api_key: str = ""
     google_api_key: str = ""

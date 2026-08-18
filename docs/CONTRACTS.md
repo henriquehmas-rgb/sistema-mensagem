@@ -112,6 +112,7 @@ META_APP_SECRET=  META_VERIFY_TOKEN=  META_GRAPH_VERSION=v21.0
 PUBLIC_URL=https://chat.srv1450678.hstgr.cloud
 NEXT_PUBLIC_API_URL=/api/v1  NEXT_PUBLIC_SOCKET_PATH=/socket.io
 MEDIA_DIR=./storage/media  (opcional; docker-compose define /data/media, volume media_data)
+UPLOAD_DAILY_QUOTA_PER_ORG=300  (opcional; cota diária de uploads outbound por org, §13)
 ```
 
 ## 9. Segurança / Multitenancy (obrigatório)
@@ -137,3 +138,82 @@ colunas **snake_case**: `organizations`, `users`, `channels`, `contacts`, `conta
 `knowledge_chunks`: colunas `id, org_id, source_id, content, embedding vector(1536), created_at`
 com índice HNSW `vector_cosine_ops`. O serviço de IA lê/escreve `knowledge_sources.status/chunk_count`
 e `knowledge_chunks` diretamente via SQL usando exatamente esses nomes.
+
+## 12. Templates WhatsApp (Wave C)
+- **Entidade MessageTemplate** (tabela `message_templates`, snake_case §11): id, orgId, channelId,
+  name, language (código Meta, ex. `pt_BR`), category (`MARKETING`|`UTILITY`|`AUTHENTICATION`),
+  status (`APPROVED`|`PENDING`|`REJECTED`|`PAUSED`|`DISABLED`), components Json (estrutura crua
+  da Meta: header/body/footer/buttons), bodyParamsCount Int (nº de `{{n}}` no body, derivado no
+  sync), metaTemplateId String?, lastSyncedAt DateTime?, createdAt/updatedAt.
+  `unique(channelId, name, language)`.
+- **Sync**: `POST /channels/:id/templates/sync` (ADMIN|SUPERVISOR) chama
+  `GET /{wabaId}/message_templates?fields=name,language,status,category,components` na Graph API
+  com o accessToken do canal e faz upsert por `(channelId, name, language)`; templates que
+  sumiram da resposta da Meta viram `status=DISABLED` (não deletar — histórico de mensagens
+  referencia o nome). `GET /channels/:id/templates?status=` lista os sincronizados.
+- **Envio**: `MessageContent` do tipo TEMPLATE usa `{templateName, language, params?}` — o campo
+  é **`language`** (NÃO `languageCode`; corrigir a leitura em `meta-graph.service.ts`, que hoje
+  ignora o idioma real e sempre cai no fallback `pt_BR`). Parâmetros do body mapeados 1:1 na
+  ordem de `params` (mesma lógica hoje existente, só a leitura do idioma muda).
+- **UI**: aba "Templates" nas Configurações → Canais (canal WhatsApp): lista com badge de status
+  colorido, botão "Sincronizar agora", preview do corpo com `{{n}}` destacado. No composer da
+  Inbox, botão "Usar modelo" abre um seletor dos templates `APPROVED` do canal da conversa com
+  inputs para cada `{{n}}` do body — obrigatório fora da janela de 24h (a API não bloqueia; a UI
+  apenas avisa). O builder de Automações (ação `send_template`) passa a escolher o template de
+  uma lista (não mais nome livre) e preencher os mesmos inputs de parâmetros.
+
+## 13. Upload de mídia outbound (Wave C)
+- **Motivo**: hoje anexos do agente e do visitante do webchat só aceitam URL (limitação
+  documentada em ARCHITECTURE.md). Reaproveita a MESMA raiz de armazenamento do re-host inbound
+  (`MediaService`/`MEDIA_DIR`), em subpasta separada: `MEDIA_DIR/{orgId}/uploads/{uuid128}.{ext}`,
+  servida por rota própria (mesmas regras anti path-traversal do `MediaController` existente).
+- **Agente (autenticado)**: `POST /api/v1/uploads` multipart/form-data, campo `file`, JWT Bearer,
+  tenant-scoped (grava em `{orgId do usuário}/uploads/`). Limite 20MB. Whitelist de mime:
+  image/*, audio/*, video/mp4, application/pdf e os tipos do WhatsApp Document. Resposta
+  `{ mediaUrl, mimeType, filename, sizeBytes }` — `mediaUrl` no MESMO formato público
+  (`/api/media/{orgId}/uploads/{arquivo}`) para o composer montar `content.mediaUrl` e enviar
+  como mensagem normal (POST /conversations/:id/messages), sem mudar o contrato de mensagens.
+- **Visitante do webchat (não autenticado)**: `POST /api/webchat/uploads`, header
+  `Authorization: Bearer {visitorToken}` (mesmo esquema de `/api/webchat/messages`), mesmo
+  limite/whitelist, resposta idêntica; o front do widget usa a URL retornada para enviar a
+  mensagem via `POST /api/webchat/messages` com `content.mediaUrl`. Um `WebchatUploadGuard`
+  valida o visitorToken ANTES do `FileInterceptor` rodar (Guards precedem Interceptors no
+  pipeline do Nest) — token ausente/inválido nunca paga o custo de bufferizar até 20MB em
+  memória; a rota também tem throttle próprio (20/min), mais restrito que o default (120/min).
+- **`content.mediaUrl` é relativo — resolução obrigatória antes da Graph API**: a resposta de
+  ambos os endpoints acima é sempre `/api/media/{orgId}/uploads/{arquivo}` (same-origin, pensado
+  para o browser do composer/widget). `MetaGraphService` (WhatsApp/Instagram) resolve esse
+  caminho para absoluto prefixando `PUBLIC_URL` (único host que serve web+api via Traefik, §2)
+  antes de montar o payload da Graph API — sem isso a Meta recebe um link sem scheme/host e não
+  consegue baixar a mídia. URLs já absolutas (aba "Por URL") passam intactas.
+- **Cota diária por org**: `MediaService.storeUpload` conta uploads bem-sucedidos por org num
+  contador Redis (`sm:upload-quota:{orgId}:{AAAA-MM-DD}`, TTL ~26h) contra `UPLOAD_DAILY_QUOTA_PER_ORG`
+  (nova env var, default 300) — defesa contra esgotamento de disco do volume `media_data`
+  (compartilhado entre TODAS as orgs). Fail-open em indisponibilidade do Redis.
+- **Limpeza de uploads órfãos**: job BullMQ repetível `media-cleanup` (fila própria, agendado a
+  cada 6h por `MediaCleanupScheduler`) remove arquivos de `MEDIA_DIR/{orgId}/uploads/` com mais
+  de 48h (mtime) que nenhuma `Message.content.mediaUrl` da própria org referencia — cobre tanto
+  o anexo estagiado no composer e descartado sem nunca ser enviado quanto uploads via
+  `POST /webchat/uploads` sem nenhuma mensagem correspondente.
+- **UI**: `attachment-popover.tsx` (composer da inbox) e o widget ganham uma aba "Enviar arquivo"
+  (drag-and-drop + seletor) ao lado da aba "Por URL" já existente; barra de progresso simples
+  durante o upload; erro de tamanho/tipo exibido inline.
+
+## 14. Observabilidade (Wave C)
+- **Logs estruturados**: JSON em produção (um logger único da api — `nestjs-pino` ou
+  equivalente), com `orgId`/`userId`/`requestId` quando disponíveis via contexto de tenancy;
+  texto legível em dev. Nenhuma credencial/PII em log (mascarar `accessToken`, `password`,
+  `Authorization`).
+- **Métricas Prometheus**: `GET /api/metrics` (VERSION_NEUTRAL, **NÃO público** — exige
+  `X-Metrics-Token: ${METRICS_TOKEN}`, nova env var; `@SkipThrottle`), formato `prom-client`
+  padrão (`prom-client` default metrics do Node) + custom: contagem/duração de requests HTTP por
+  rota, profundidade e taxa de falha das 6 filas BullMQ (via `Queue.getJobCounts()`), latência do
+  pipeline `/reply` da IA (histograma, populada pelo processor `ai-reply`).
+- **Painel de filas**: `bull-board` montado em `/admin/queues` (VERSION_NEUTRAL), protegido por
+  `@Roles('ADMIN')` (usa o mesmo JwtAuthGuard/RolesGuard globais — NÃO é `@Public`).
+- **Rastreamento de erros (opcional)**: integração Sentry no-op quando `SENTRY_DSN` (nova env
+  var) está vazio; captura de exceções não tratadas na api e no serviço de ia quando configurado.
+- **Novas env vars** (`.env.example`): `METRICS_TOKEN=`, `SENTRY_DSN=` (ambas opcionais em dev,
+  `METRICS_TOKEN` obrigatória em produção pelo mesmo `env.validation.ts`).
+- **docker-compose**: nenhum serviço novo — tudo dentro do container `api`; `infra/README.md`
+  documenta como consultar `/api/metrics` e `/admin/queues` a partir da VPS.

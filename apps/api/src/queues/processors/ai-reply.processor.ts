@@ -15,6 +15,7 @@ import {
   toConversationDto,
   toMessageDto,
 } from '../../common/serializers';
+import { MetricsService } from '../../observability/metrics/metrics.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RealtimeService } from '../../realtime/realtime.service';
 import { AiServiceClient } from '../ai-service.client';
@@ -44,6 +45,7 @@ export class AiReplyProcessor extends WorkerHost {
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
     private readonly aiClient: AiServiceClient,
+    private readonly metrics: MetricsService,
     @InjectQueue(QUEUES.MESSAGE_OUTBOUND)
     private readonly messageOutboundQueue: Queue<MessageOutboundJob>,
     @InjectQueue(QUEUES.AUTOMATION_RUN)
@@ -108,20 +110,28 @@ export class AiReplyProcessor extends WorkerHost {
     });
     history.reverse(); // ordem cronológica para o prompt
 
-    const response = await this.aiClient.reply({
-      org_id: orgId,
-      conversation_id: conversationId,
-      messages: history.map((message) => ({
-        role: message.direction === MessageDirection.INBOUND ? 'user' : 'assistant',
-        content: this.textOf(message),
-      })),
-      contact: {
-        id: conversation.contact.id,
-        name: conversation.contact.name,
-        phone: conversation.contact.phone,
-        email: conversation.contact.email,
-      },
-    });
+    // CONTRACTS §14: histograma ai_reply_duration_seconds — só a chamada
+    // HTTP em si (exclui a leitura de histórico e a persistência abaixo).
+    const start = process.hrtime.bigint();
+    let response: Awaited<ReturnType<AiServiceClient['reply']>>;
+    try {
+      response = await this.aiClient.reply({
+        org_id: orgId,
+        conversation_id: conversationId,
+        messages: history.map((message) => ({
+          role: message.direction === MessageDirection.INBOUND ? 'user' : 'assistant',
+          content: this.textOf(message),
+        })),
+        contact: {
+          id: conversation.contact.id,
+          name: conversation.contact.name,
+          phone: conversation.contact.phone,
+          email: conversation.contact.email,
+        },
+      });
+    } finally {
+      this.metrics.observeAiReplyDuration(Number(process.hrtime.bigint() - start) / 1e9);
+    }
 
     if (response.handoff) {
       await this.handleHandoff(orgId, conversationId, response.handoff_reason);

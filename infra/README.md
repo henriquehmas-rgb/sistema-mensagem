@@ -153,3 +153,73 @@ docker compose -f infra/docker-compose.yml --env-file .env exec postgres psql -U
   a migration inicial do Prisma executa `CREATE EXTENSION IF NOT EXISTS vector`.
 - **Segurança**: nunca exponha postgres/redis/ai em portas do host em produção;
   o compose deste repo já não expõe.
+
+## 7. Observabilidade (métricas e painel de filas)
+
+Nada de serviço novo no compose — tudo dentro do container `api` (CONTRACTS §14).
+
+### Métricas Prometheus — `GET /api/metrics`
+
+Requer o header `X-Metrics-Token` igual ao valor de `METRICS_TOKEN` do `.env`
+(gerar com `openssl rand -hex 32`; **obrigatória em produção** — sem ela a api
+não sobe). Formato padrão `prom-client` (texto Prometheus).
+
+```bash
+# a partir da VPS (ou de qualquer máquina com acesso ao host):
+curl -s https://chat.srv1450678.hstgr.cloud/api/metrics \
+  -H "X-Metrics-Token: $METRICS_TOKEN"
+
+# sem o header (ou com o valor errado) → 401
+curl -i https://chat.srv1450678.hstgr.cloud/api/metrics
+```
+
+Métricas expostas: `http_requests_total` / `http_request_duration_seconds`
+(por rota/método/status), `bullmq_queue_jobs` (gauge, por fila/estado —
+waiting/active/delayed/failed, atualizado a cada scrape via
+`Queue.getJobCounts()`), `ai_reply_duration_seconds` (latência da chamada
+api→ia em `/reply`) + métricas default do Node (CPU/memória/event loop).
+
+Para apontar um Prometheus a este endpoint, configurar o header estático no
+job do `prometheus.yml`:
+
+```yaml
+scrape_configs:
+  - job_name: sistema-mensagem-api
+    metrics_path: /api/metrics
+    authorization:
+      type: X-Metrics-Token
+    scheme: https
+    static_configs:
+      - targets: ['chat.srv1450678.hstgr.cloud']
+    # Prometheus não suporta header custom nativamente em todas as versões —
+    # alternativa: um `authorization.credentials_file`/reverse-proxy que
+    # injete o header, ou `params`/`relabel_configs` conforme a versão.
+```
+
+### Painel de filas (Bull Board) — `/admin/queues`
+
+Protegido pelo MESMO esquema de autenticação da API (JWT Bearer de um usuário
+`ADMIN`) — **não** é uma página de login própria: o painel é uma SPA que só
+responde se a requisição já chegar com `Authorization: Bearer <access token
+de um ADMIN>`. Login normal do painel (`https://chat.srv1450678.hstgr.cloud`)
+não guarda esse header no navegador automaticamente, então o acesso típico é
+via terminal (curl) ou uma extensão de navegador que injete o header
+(ex.: ModHeader) apontando para a mesma origem.
+
+```bash
+# 1) pegar um access token de um usuário ADMIN
+TOKEN=$(curl -s https://chat.srv1450678.hstgr.cloud/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"admin@exemplo.com","password":"...","orgSlug":"..."}' \
+  | node -pe 'JSON.parse(require("fs").readFileSync(0)).accessToken')
+
+# 2) usar o token no painel (via extensão de header) OU inspecionar via API:
+curl -s https://chat.srv1450678.hstgr.cloud/api/admin/queues/api/queues \
+  -H "Authorization: Bearer $TOKEN"
+
+# sem o header, ou usuário sem role ADMIN → 401/403 (nunca abre o painel)
+```
+
+Access tokens expiram em 15min (mesma regra do resto da API) — repita o passo
+1 quando expirar. Usuário desativado perde acesso em ≤30s (mesma janela do
+`UserStatusService` usado no restante da api).

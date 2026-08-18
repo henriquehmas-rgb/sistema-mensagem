@@ -21,6 +21,7 @@ export const TENANT_MODELS: ReadonlySet<Prisma.ModelName> = new Set<Prisma.Model
   'KnowledgeSource',
   'KnowledgeChunk',
   'AuditLog',
+  'MessageTemplate',
 ]);
 
 export function isTenantModel(model: string): boolean {

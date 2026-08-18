@@ -19,6 +19,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useChannels, useCreateChannel } from "@/lib/settings/hooks";
 import { cn } from "@/lib/utils";
 
@@ -26,6 +27,7 @@ import {
   CHANNEL_LABELS,
   ChannelIcon,
 } from "../../inbox/components/channel-icons";
+import { TemplatesSettings } from "./templates-settings";
 
 const STATUS_META: Record<ChannelStatus, { label: string; variant: "success" | "secondary" | "destructive" }> = {
   ACTIVE: { label: "Ativo", variant: "success" },
@@ -481,14 +483,17 @@ function ChannelCard({ channel }: { channel: ChannelDto }) {
   );
 }
 
-export function ChannelsSettings() {
-  const channelsQuery = useChannels();
-  const [dialogOpen, setDialogOpen] = useState(false);
-
-  const channels = channelsQuery.data ?? [];
-
+function ChannelsList({
+  channelsQuery,
+  channels,
+  onConnect,
+}: {
+  channelsQuery: ReturnType<typeof useChannels>;
+  channels: ChannelDto[];
+  onConnect: () => void;
+}) {
   return (
-    <div className="max-w-3xl space-y-4">
+    <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold">Canais conectados</h2>
@@ -496,7 +501,7 @@ export function ChannelsSettings() {
             WhatsApp, Instagram e Webchat — todas as conversas caem na mesma inbox.
           </p>
         </div>
-        <Button size="sm" className="gap-1.5" onClick={() => setDialogOpen(true)}>
+        <Button size="sm" className="gap-1.5" onClick={onConnect}>
           <Plus className="h-4 w-4" />
           Conectar canal
         </Button>
@@ -523,7 +528,50 @@ export function ChannelsSettings() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
 
+export function ChannelsSettings() {
+  const channelsQuery = useChannels();
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [tab, setTab] = useState<"channels" | "templates">("channels");
+
+  const channels = channelsQuery.data ?? [];
+  const whatsappChannels = channels.filter((channel) => channel.type === "WHATSAPP");
+
+  // A aba Templates só existe quando há pelo menos um canal WhatsApp conectado.
+  if (whatsappChannels.length === 0) {
+    return (
+      <div className="max-w-3xl">
+        <ChannelsList
+          channelsQuery={channelsQuery}
+          channels={channels}
+          onConnect={() => setDialogOpen(true)}
+        />
+        <ConnectChannelDialog open={dialogOpen} onOpenChange={setDialogOpen} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-3xl">
+      <Tabs value={tab} onValueChange={(value) => setTab(value as "channels" | "templates")}>
+        <TabsList className="mb-4">
+          <TabsTrigger value="channels">Canais</TabsTrigger>
+          <TabsTrigger value="templates">Templates</TabsTrigger>
+        </TabsList>
+        <TabsContent value="channels">
+          <ChannelsList
+            channelsQuery={channelsQuery}
+            channels={channels}
+            onConnect={() => setDialogOpen(true)}
+          />
+        </TabsContent>
+        <TabsContent value="templates">
+          <TemplatesSettings channels={whatsappChannels} />
+        </TabsContent>
+      </Tabs>
       <ConnectChannelDialog open={dialogOpen} onOpenChange={setDialogOpen} />
     </div>
   );

@@ -11,10 +11,11 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import APIRouter, Depends, FastAPI
+from fastapi import APIRouter, Depends, FastAPI, Request
 
 from . import db
 from .auth import require_service_token
+from .observability import capture_exception, init_sentry
 from .routes.health import router as health_router
 from .routes.ingest import router as ingest_router
 from .routes.query import router as query_router
@@ -65,11 +66,22 @@ async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
+    init_sentry()
+
     app = FastAPI(
         title="SEEG Omni — AI Service",
         version="1.0.0",
         lifespan=_lifespan,
     )
+
+    @app.exception_handler(Exception)
+    async def _unhandled_exception_handler(_request: Request, exc: Exception):
+        # CONTRACTS §14: captura no Sentry (no-op se SENTRY_DSN vazio) e
+        # SEMPRE re-levanta — nunca substitui a resposta/comportamento padrao
+        # do FastAPI para excecoes nao tratadas (mesmo padrao do
+        # SentryExceptionFilter da api, que delega para BaseExceptionFilter).
+        capture_exception(exc)
+        raise exc
 
     app.include_router(health_router)
 

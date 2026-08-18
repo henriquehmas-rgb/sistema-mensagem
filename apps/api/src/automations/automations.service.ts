@@ -6,7 +6,7 @@ import type { PaginationQuery } from '../common/dto/pagination.query';
 import { PrismaService } from '../prisma/prisma.service';
 import { AUTOMATION_EVENTS } from '../queues/queues.constants';
 import { TenancyService } from '../tenancy/tenancy.service';
-import { parseAction, parseCondition, parseTrigger } from './automation.types';
+import { AUTOMATION_ACTION_TYPES, parseAction, parseCondition, parseTrigger } from './automation.types';
 import type { CreateAutomationDto } from './dto/create-automation.dto';
 import type { UpdateAutomationDto } from './dto/update-automation.dto';
 
@@ -151,7 +151,7 @@ export class AutomationsService {
     for (const [index, action] of (actions ?? []).entries()) {
       if (!parseAction(action)) {
         throw new BadRequestException(
-          `actions[${index}] inválida — esperado {type: assign|add_tag|move_stage|set_status|disable_ai, ...}`,
+          `actions[${index}] inválida — esperado {type: ${AUTOMATION_ACTION_TYPES.join('|')}, ...}`,
         );
       }
     }

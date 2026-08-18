@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 
 import { AttachmentPopover, type StagedAttachment } from "./attachment-popover";
 import { EmojiPicker } from "./emoji-picker";
+import { TemplatePickerPopover, type TemplateSelection } from "./template-picker-popover";
 
 const TYPING_IDLE_MS = 2_000;
 const MAX_TEXTAREA_HEIGHT_PX = 160;
@@ -127,6 +128,18 @@ export function Composer({ conversation }: ComposerProps) {
     }
   };
 
+  const handleSendTemplate = (selection: TemplateSelection): void => {
+    sendMessage.mutate({
+      type: "TEMPLATE",
+      content: {
+        templateName: selection.templateName,
+        language: selection.language,
+        ...(selection.params.length > 0 ? { params: selection.params } : {}),
+      },
+    });
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
   const insertEmoji = (emoji: string): void => {
     const textarea = textareaRef.current;
     if (!textarea) {
@@ -225,6 +238,13 @@ export function Composer({ conversation }: ComposerProps) {
       <div className="flex items-end gap-1.5 rounded-xl border bg-background p-1.5 focus-within:ring-2 focus-within:ring-ring/30">
         <div className="flex items-center">
           <AttachmentPopover onStage={setAttachment} />
+          {conversation.channelType === "WHATSAPP" ? (
+            <TemplatePickerPopover
+              channelId={conversation.channelId}
+              onSend={handleSendTemplate}
+              disabled={sendMessage.isPending}
+            />
+          ) : null}
           <EmojiPicker onPick={insertEmoji} />
         </div>
 

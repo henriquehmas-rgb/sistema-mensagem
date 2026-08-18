@@ -12,6 +12,7 @@ import type {
   AutomationTrigger,
   AutomationTriggerType,
   ChannelType,
+  MessageTemplateDto,
   PipelineStageDto,
   TagDto,
   UserDto,
@@ -36,14 +37,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
 import { useAgents, useStages, useTags } from "@/lib/inbox/hooks";
 import {
+  useApprovedTemplatesAllChannels,
   useCreateAutomation,
   useUpdateAutomation,
 } from "@/lib/settings/hooks";
 
 import { CHANNEL_LABELS } from "../../inbox/components/channel-icons";
+import { TemplateBodyPreview, templateBodyText } from "./templates-settings";
 
 // ---------------------------------------------------------------------------
 // Rótulos (compartilhados com a listagem)
@@ -72,13 +74,10 @@ const CONDITION_FIELD_LABELS: Record<AutomationConditionField, string> = {
 };
 
 const ACTION_LABELS: Record<AutomationActionType, string> = {
-  assign_agent: "Atribuir a agente",
+  assign: "Atribuir a agente",
   add_tag: "Adicionar tag",
   move_stage: "Mover para etapa",
-  send_text: "Enviar mensagem de texto",
   send_template: "Enviar template",
-  call_webhook: "Chamar webhook externo",
-  notify_agents: "Notificar agentes",
 };
 
 const TRIGGER_OPTIONS = Object.keys(TRIGGER_LABELS) as AutomationTriggerType[];
@@ -100,39 +99,30 @@ function defaultConditionValue(field: AutomationConditionField): string {
 
 function defaultActionFor(type: AutomationActionType): AutomationAction {
   switch (type) {
-    case "assign_agent":
-      return { type, agentId: "" };
+    case "assign":
+      return { type, userId: "" };
     case "add_tag":
       return { type, tagId: "" };
     case "move_stage":
       return { type, stageId: "" };
-    case "send_text":
-      return { type, text: "" };
     case "send_template":
-      return { type, templateName: "" };
-    case "call_webhook":
-      return { type, url: "" };
-    case "notify_agents":
-      return { type };
+      return { type, templateId: "" };
   }
 }
 
 function isActionComplete(action: AutomationAction): boolean {
   switch (action.type) {
-    case "assign_agent":
-      return action.agentId.length > 0;
+    case "assign":
+      return action.userId.length > 0;
     case "add_tag":
       return action.tagId.length > 0;
     case "move_stage":
       return action.stageId.length > 0;
-    case "send_text":
-      return action.text.trim().length > 0;
     case "send_template":
-      return action.templateName.trim().length > 0;
-    case "call_webhook":
-      return action.url.trim().length > 0;
-    case "notify_agents":
-      return true;
+      return (
+        action.templateId.trim().length > 0 &&
+        (action.params ?? []).every((param) => param.trim().length > 0)
+      );
   }
 }
 
@@ -310,6 +300,7 @@ interface ActionRowProps {
   agents: UserDto[];
   tags: TagDto[];
   stages: PipelineStageDto[];
+  templates: MessageTemplateDto[];
 }
 
 function ActionParams({
@@ -318,13 +309,14 @@ function ActionParams({
   agents,
   tags,
   stages,
-}: Pick<ActionRowProps, "action" | "onChange" | "agents" | "tags" | "stages">) {
+  templates,
+}: Pick<ActionRowProps, "action" | "onChange" | "agents" | "tags" | "stages" | "templates">) {
   switch (action.type) {
-    case "assign_agent":
+    case "assign":
       return (
         <Select
-          value={action.agentId.length > 0 ? action.agentId : undefined}
-          onValueChange={(agentId) => onChange({ ...action, agentId })}
+          value={action.userId.length > 0 ? action.userId : undefined}
+          onValueChange={(userId) => onChange({ ...action, userId })}
         >
           <SelectTrigger className="h-8 text-xs">
             <SelectValue placeholder="Escolher agente…" />
@@ -386,40 +378,68 @@ function ActionParams({
           </SelectContent>
         </Select>
       );
-    case "send_text":
+    case "send_template": {
+      // `id` é a chave — nome+idioma podem colidir entre templates de canais
+      // diferentes (ex.: dois canais WhatsApp com o mesmo "hello_world").
+      const selectedTemplate =
+        templates.find((template) => template.id === action.templateId) ?? null;
+      const params = action.params ?? [];
+
       return (
-        <Textarea
-          value={action.text}
-          onChange={(event) => onChange({ ...action, text: event.target.value })}
-          placeholder="Mensagem que será enviada ao contato…"
-          className="min-h-16 text-xs"
-        />
+        <div className="space-y-2">
+          <Select
+            value={action.templateId.length > 0 ? action.templateId : undefined}
+            onValueChange={(templateId) => {
+              const template = templates.find((item) => item.id === templateId);
+              const count = template?.bodyParamsCount ?? 0;
+              onChange({
+                type: "send_template",
+                templateId,
+                ...(count > 0 ? { params: Array.from({ length: count }, () => "") } : {}),
+              });
+            }}
+          >
+            <SelectTrigger className="h-8 text-xs">
+              <SelectValue placeholder="Escolher template aprovado…" />
+            </SelectTrigger>
+            <SelectContent>
+              {templates.map((template) => (
+                <SelectItem key={template.id} value={template.id}>
+                  {template.name} ({template.language})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {templates.length === 0 ? (
+            <p className="text-[11px] text-muted-foreground">
+              Nenhum template aprovado. Sincronize em Configurações → Canais →
+              Templates.
+            </p>
+          ) : null}
+          {selectedTemplate ? (
+            <TemplateBodyPreview text={templateBodyText(selectedTemplate)} />
+          ) : null}
+          {params.length > 0 ? (
+            <div className="space-y-1.5">
+              {params.map((value, index) => (
+                <Input
+                  // eslint-disable-next-line react/no-array-index-key -- posição fixa = {{n}}
+                  key={index}
+                  value={value}
+                  onChange={(event) => {
+                    const nextParams = [...params];
+                    nextParams[index] = event.target.value;
+                    onChange({ ...action, params: nextParams });
+                  }}
+                  placeholder={`Valor do parâmetro {{${index + 1}}}`}
+                  className="h-8 text-xs"
+                />
+              ))}
+            </div>
+          ) : null}
+        </div>
       );
-    case "send_template":
-      return (
-        <Input
-          value={action.templateName}
-          onChange={(event) => onChange({ ...action, templateName: event.target.value })}
-          placeholder="Nome do template aprovado na Meta"
-          className="h-8 font-mono text-xs"
-        />
-      );
-    case "call_webhook":
-      return (
-        <Input
-          type="url"
-          value={action.url}
-          onChange={(event) => onChange({ ...action, url: event.target.value })}
-          placeholder="https://exemplo.com/webhook"
-          className="h-8 font-mono text-xs"
-        />
-      );
-    case "notify_agents":
-      return (
-        <p className="text-[11px] text-muted-foreground">
-          Todos os agentes online recebem uma notificação.
-        </p>
-      );
+    }
   }
 }
 
@@ -433,6 +453,7 @@ function ActionRow({
   agents,
   tags,
   stages,
+  templates,
 }: ActionRowProps) {
   return (
     <div className="space-y-2 rounded-lg border bg-muted/30 p-2.5">
@@ -482,6 +503,7 @@ function ActionRow({
         agents={agents}
         tags={tags}
         stages={stages}
+        templates={templates}
       />
     </div>
   );
@@ -504,6 +526,7 @@ export function AutomationBuilder({ open, onOpenChange, automation }: Automation
   const agentsQuery = useAgents();
   const tagsQuery = useTags();
   const stagesQuery = useStages();
+  const templatesQuery = useApprovedTemplatesAllChannels();
 
   const createAutomation = useCreateAutomation();
   const updateAutomation = useUpdateAutomation();
@@ -727,6 +750,7 @@ export function AutomationBuilder({ open, onOpenChange, automation }: Automation
                     agents={agentsQuery.data ?? []}
                     tags={tagsQuery.data ?? []}
                     stages={stagesQuery.data ?? []}
+                    templates={templatesQuery.data}
                   />
                 ))}
               </div>

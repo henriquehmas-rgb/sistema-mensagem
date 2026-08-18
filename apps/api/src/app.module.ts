@@ -19,14 +19,17 @@ import { InboundModule } from './inbound/inbound.module';
 import { KnowledgeModule } from './knowledge/knowledge.module';
 import { MediaModule } from './media/media.module';
 import { MessagesModule } from './messages/messages.module';
+import { ObservabilityModule } from './observability/observability.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { QueueModule } from './queues/queue.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { RedisModule } from './redis/redis.module';
 import { StagesModule } from './stages/stages.module';
 import { TagsModule } from './tags/tags.module';
+import { TemplatesModule } from './templates/templates.module';
 import { TenancyInterceptor } from './tenancy/tenancy.interceptor';
 import { TenancyModule } from './tenancy/tenancy.module';
+import { UploadsModule } from './uploads/uploads.module';
 import { UsersModule } from './users/users.module';
 import { WebchatModule } from './webchat/webchat.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
@@ -85,11 +88,14 @@ function parseRedisConnection(redisUrl: string) {
     DashboardModule,
     KnowledgeModule,
     MediaModule,
+    UploadsModule,
     ChannelsModule,
+    TemplatesModule,
     InboundModule,
     WebhooksModule,
     WebchatModule,
     AutomationsModule,
+    ObservabilityModule,
   ],
   providers: [
     // Ordem importa: throttle → autenticação → RBAC; depois interceptor popula tenant

@@ -1,14 +1,18 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import type {
   AutomationDto,
+  ChannelDto,
   CreateChannelDto,
   CreateKnowledgeSourceDto,
+  MessageTemplateDto,
   PipelineStageDto,
   TagDto,
+  TemplateStatus,
   UpsertAutomationDto,
 } from "@sm/shared";
 
@@ -27,9 +31,11 @@ import {
   deleteTag,
   listAutomations,
   listChannels,
+  listChannelTemplates,
   listKnowledgeSources,
   listUsers,
   reorderStages,
+  syncChannelTemplates,
   updateAutomation,
   updateChannel,
   updateStage,
@@ -48,6 +54,8 @@ export const settingsKeys = {
   channels: ["channels"] as const,
   knowledge: ["knowledge"] as const,
   automations: ["automations"] as const,
+  templates: (channelId: string, status?: TemplateStatus) =>
+    ["channels", channelId, "templates", status ?? "all"] as const,
 };
 
 function errorMessageOf(error: unknown): string {
@@ -272,6 +280,69 @@ export function useUpdateChannel() {
     },
     onError: (error) => toast.error(errorMessageOf(error)),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Templates WhatsApp (§12) — GET/POST /channels/:id/templates[/sync]
+// ---------------------------------------------------------------------------
+
+export function useChannelTemplates(channelId: string | null, status?: TemplateStatus) {
+  return useQuery({
+    queryKey: settingsKeys.templates(channelId ?? "none", status),
+    queryFn: () => listChannelTemplates(channelId ?? "", status),
+    enabled: channelId !== null,
+    staleTime: 30_000,
+  });
+}
+
+export function useSyncChannelTemplates(channelId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => syncChannelTemplates(channelId),
+    onSuccess: (templates) => {
+      toast.success(`${templates.length} template(s) sincronizado(s).`);
+      void queryClient.invalidateQueries({
+        queryKey: ["channels", channelId, "templates"],
+      });
+    },
+    onError: (error) => toast.error(errorMessageOf(error)),
+  });
+}
+
+/**
+ * Templates APROVADOS de todos os canais WhatsApp da org — usado pelo builder
+ * de Automações (ação `send_template`), que não está preso a uma conversa/canal
+ * específico. Um único canal WhatsApp é o caso comum; múltiplos são mesclados.
+ */
+export function useApprovedTemplatesAllChannels() {
+  const channelsQuery = useChannels();
+  const whatsappChannels = useMemo(
+    () => (channelsQuery.data ?? []).filter((channel): channel is ChannelDto => channel.type === "WHATSAPP"),
+    [channelsQuery.data],
+  );
+
+  const queries = useQueries({
+    queries: whatsappChannels.map((channel) => ({
+      queryKey: settingsKeys.templates(channel.id, "APPROVED" as TemplateStatus),
+      queryFn: () => listChannelTemplates(channel.id, "APPROVED"),
+      staleTime: 30_000,
+    })),
+  });
+
+  const templates = useMemo(() => {
+    const byKey = new Map<string, MessageTemplateDto>();
+    for (const query of queries) {
+      for (const template of query.data ?? []) {
+        byKey.set(`${template.name}::${template.language}`, template);
+      }
+    }
+    return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [queries]);
+
+  return {
+    data: templates,
+    isLoading: channelsQuery.isLoading || queries.some((query) => query.isLoading),
+  };
 }
 
 // ---------------------------------------------------------------------------

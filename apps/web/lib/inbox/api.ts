@@ -185,6 +185,21 @@ export function sendMessage(
   });
 }
 
+/** Resposta de POST /uploads (CONTRACTS §13). */
+export interface UploadedMediaDto {
+  mediaUrl: string;
+  mimeType: string;
+  filename: string;
+  sizeBytes: number;
+}
+
+/** POST /uploads — multipart/form-data, campo `file` (anexo do agente na Inbox). */
+export function uploadAttachment(file: File): Promise<UploadedMediaDto> {
+  const formData = new FormData();
+  formData.append("file", file);
+  return api.upload<UploadedMediaDto>("/uploads", formData);
+}
+
 // ---------------------------------------------------------------------------
 // Recursos auxiliares (agentes, etapas, tags, contatos)
 // ---------------------------------------------------------------------------

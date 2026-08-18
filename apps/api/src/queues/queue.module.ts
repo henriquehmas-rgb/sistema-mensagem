@@ -1,6 +1,7 @@
 import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { ChannelsModule } from '../channels/channels.module';
+import { MetricsCoreModule } from '../observability/metrics/metrics-core.module';
 import { AiServiceClient } from './ai-service.client';
 import { AiReplyProcessor } from './processors/ai-reply.processor';
 import { AutomationRunProcessor } from './processors/automation-run.processor';
@@ -27,6 +28,11 @@ import { QUEUES } from './queues.constants';
     ),
     // MetaGraphService — envio real WhatsApp no MessageOutboundProcessor.
     ChannelsModule,
+    // Histograma ai_reply_duration_seconds (CONTRACTS §14), populado pelo
+    // AiReplyProcessor ao redor da chamada HTTP api→ia. Módulo SEM
+    // dependência deste (QueueModule) — evita ciclo com MetricsModule, que
+    // por sua vez importa QueueModule para o gauge de profundidade das filas.
+    MetricsCoreModule,
   ],
   providers: [
     AiServiceClient,

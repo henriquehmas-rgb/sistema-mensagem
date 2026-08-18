@@ -4,10 +4,12 @@ import type {
   CreateChannelDto,
   CreateKnowledgeSourceDto,
   KnowledgeSourceDto,
+  MessageTemplateDto,
   PaginatedDto,
   PipelineStageDto,
   Role,
   TagDto,
+  TemplateStatus,
   UpsertAutomationDto,
   UserDto,
 } from "@sm/shared";
@@ -125,6 +127,25 @@ export function updateChannel(
   input: UpdateChannelInput,
 ): Promise<ChannelDto> {
   return api.patch<ChannelDto>(`/channels/${id}`, { body: input });
+}
+
+// ---------------------------------------------------------------------------
+// Templates WhatsApp — GET /channels/:id/templates + POST .../sync (§12)
+// ---------------------------------------------------------------------------
+
+export async function listChannelTemplates(
+  channelId: string,
+  status?: TemplateStatus,
+): Promise<MessageTemplateDto[]> {
+  const response = await api.get<MessageTemplateDto[] | PaginatedDto<MessageTemplateDto>>(
+    `/channels/${channelId}/templates`,
+    { query: { status } },
+  );
+  return unwrapList(response);
+}
+
+export function syncChannelTemplates(channelId: string): Promise<MessageTemplateDto[]> {
+  return api.post<MessageTemplateDto[]>(`/channels/${channelId}/templates/sync`);
 }
 
 // ---------------------------------------------------------------------------

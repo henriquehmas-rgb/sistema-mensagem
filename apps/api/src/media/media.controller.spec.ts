@@ -123,3 +123,77 @@ describe('MediaController — serve', () => {
     }
   });
 });
+
+describe('MediaController — serveUpload (CONTRACTS §13, path de 3 segmentos)', () => {
+  it('arquivo de upload existente → sendFile do caminho {orgId}/uploads/{arquivo}', async () => {
+    mkdirSync(path.join(mediaDir, ORG_ID, 'uploads'), { recursive: true });
+    writeFileSync(
+      path.join(mediaDir, ORG_ID, 'uploads', FILE_NAME),
+      Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+    );
+
+    const res = createResponse();
+    await controller.serveUpload(ORG_ID, FILE_NAME, res);
+
+    expect(res.sendFile).toHaveBeenCalledExactlyOnceWith(
+      path.resolve(mediaDir, ORG_ID, 'uploads', FILE_NAME),
+      expect.any(Function),
+    );
+    expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'image/png');
+  });
+
+  it('upload inexistente (mas formato válido) → 404', async () => {
+    mkdirSync(path.join(mediaDir, ORG_ID, 'uploads'), { recursive: true });
+    const res = createResponse();
+    const missing = `${randomBytes(16).toString('hex')}.png`;
+    await expect(controller.serveUpload(ORG_ID, missing, res)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(res.sendFile).not.toHaveBeenCalled();
+  });
+
+  it('NUNCA cai no arquivo de 2 segmentos com o mesmo nome (uploads é subpasta isolada)', async () => {
+    // Mesmo nome de arquivo existe nos DOIS lugares — cada rota só enxerga o seu.
+    writeFileSync(path.join(mediaDir, ORG_ID, FILE_NAME), 'nivel-2-segmentos');
+    mkdirSync(path.join(mediaDir, ORG_ID, 'uploads'), { recursive: true });
+    writeFileSync(path.join(mediaDir, ORG_ID, 'uploads', FILE_NAME), 'nivel-3-segmentos-uploads');
+
+    const res = createResponse();
+    await controller.serveUpload(ORG_ID, FILE_NAME, res);
+    expect(res.sendFile).toHaveBeenCalledExactlyOnceWith(
+      path.resolve(mediaDir, ORG_ID, 'uploads', FILE_NAME),
+      expect.any(Function),
+    );
+  });
+
+  it.each([
+    ['..', 'file com dot-dot puro'],
+    ['../../secret.png', 'traversal relativo'],
+    ['deadbeef.png', 'nome fora do formato de 128 bits'],
+  ])('arquivo malicioso/inválido em uploads %s (%s) → 400', async (file) => {
+    const res = createResponse();
+    await expect(controller.serveUpload(ORG_ID, file, res)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(res.sendFile).not.toHaveBeenCalled();
+  });
+
+  it('nunca serve fora da raiz de mídia mesmo com segmentos válidos', async () => {
+    // Arquivo "vizinho" fora de MEDIA_DIR com nomes que passariam na regex:
+    // o resolve+prefixo garante que só {mediaRoot}/{orgId}/{file} é servível.
+    const outside = path.resolve(mediaDir, '..', `sm-media-outside-${Date.now()}`);
+    mkdirSync(path.join(outside, ORG_ID), { recursive: true });
+    writeFileSync(path.join(outside, ORG_ID, FILE_NAME), 'segredo');
+    try {
+      const res = createResponse();
+      await controller.serve(ORG_ID, FILE_NAME, res);
+      // Servido DE DENTRO da raiz (o arquivo legítimo), nunca o de fora.
+      expect(res.sendFile).toHaveBeenCalledExactlyOnceWith(
+        path.resolve(mediaDir, ORG_ID, FILE_NAME),
+        expect.any(Function),
+      );
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+});

@@ -196,3 +196,69 @@ export function filenameFromUrl(url: string): string {
     return "arquivo";
   }
 }
+
+// ---------------------------------------------------------------------------
+// Upload de mídia outbound (CONTRACTS §13) — espelha a whitelist/limite do
+// backend (apps/api/src/media/media-extension.ts, media/multer-upload.options.ts)
+// só para feedback IMEDIATO na UI; a validação que vale é sempre a da API.
+// ---------------------------------------------------------------------------
+
+export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+
+const UPLOAD_DOCUMENT_MIME_TYPES = new Set([
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "text/plain",
+]);
+
+// Conjuntos FECHADOS (não `image/*`/`audio/*` genérico) — espelham
+// EXATAMENTE apps/api/src/media/media-extension.ts (UPLOAD_IMAGE_MIME_TYPES/
+// UPLOAD_AUDIO_MIME_TYPES): um subtipo fora dessas listas (ex.: image/bmp,
+// image/svg+xml, audio/flac) passava aqui antes mas era sempre rejeitado pelo
+// servidor com 400 — o usuário via o spinner de upload iniciar e falhar sem
+// necessidade. Se a whitelist do servidor mudar, esta precisa ser atualizada
+// junto (mantidas hand-duplicadas de propósito: apps/web não depende de
+// apps/api, só de @sm/shared, que não tem esses tipos hoje).
+const UPLOAD_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+
+const UPLOAD_AUDIO_MIME_TYPES = new Set([
+  "audio/aac",
+  "audio/amr",
+  "audio/mp4",
+  "audio/mpeg",
+  "audio/ogg",
+  "audio/opus",
+  "audio/wav",
+]);
+
+/** Espelho EXATO da whitelist fechada do upload outbound (media-extension.ts): image/audio explícitos, video/mp4, PDF e Document do WhatsApp. */
+export function isAllowedUploadMime(mimeType: string): boolean {
+  const mime = mimeType.toLowerCase();
+  return (
+    UPLOAD_IMAGE_MIME_TYPES.has(mime) ||
+    UPLOAD_AUDIO_MIME_TYPES.has(mime) ||
+    mime === "video/mp4" ||
+    UPLOAD_DOCUMENT_MIME_TYPES.has(mime)
+  );
+}
+
+/** Tipo de mensagem (MessageType) derivado do mime do arquivo enviado. */
+export function messageTypeForMime(mimeType: string): "IMAGE" | "AUDIO" | "VIDEO" | "DOCUMENT" {
+  const mime = mimeType.toLowerCase();
+  if (mime.startsWith("image/")) return "IMAGE";
+  if (mime.startsWith("audio/")) return "AUDIO";
+  if (mime.startsWith("video/")) return "VIDEO";
+  return "DOCUMENT";
+}
+
+/** "2.3 MB" / "480 KB" — usado nas mensagens de erro de tamanho excedido. */
+export function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}

@@ -1,5 +1,6 @@
 import { InjectQueue } from '@nestjs/bullmq';
 import {
+  BadRequestException,
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
@@ -16,6 +17,7 @@ import {
   type MessageDto,
 } from '../common/serializers';
 import { InboundMessageService } from '../inbound/inbound-message.service';
+import { MediaService, type StoredUpload, type UploadFileInput } from '../media/media.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { QUEUES, type AutomationRunJob } from '../queues/queues.constants';
 import { RealtimeService } from '../realtime/realtime.service';
@@ -54,6 +56,7 @@ export class WebchatService {
     private readonly jwtService: JwtService,
     private readonly inbound: InboundMessageService,
     private readonly realtime: RealtimeService,
+    private readonly media: MediaService,
     @InjectQueue(QUEUES.AUTOMATION_RUN)
     private readonly automationRunQueue: Queue<AutomationRunJob>,
   ) {}
@@ -123,6 +126,8 @@ export class WebchatService {
     dto: CreateWebchatMessageDto,
   ): Promise<{ message: MessageDto }> {
     const token = await this.verifyToken(visitorToken);
+    const type = dto.type ?? MessageType.TEXT;
+    const content = this.buildVisitorContent(token.orgId, type, dto);
 
     const result = await this.inbound.ingestIntoConversation({
       orgId: token.orgId,
@@ -130,8 +135,8 @@ export class WebchatService {
       channelType: ChannelType.WEBCHAT,
       conversationId: token.conversationId,
       contactId: token.sub,
-      type: MessageType.TEXT,
-      content: { text: dto.text },
+      type,
+      content,
     });
     if (!result.messageId) {
       throw new NotFoundException('Conversa não encontrada');
@@ -145,6 +150,61 @@ export class WebchatService {
       throw new NotFoundException('Mensagem não encontrada');
     }
     return { message: sanitizeMessageForVisitor(toMessageDto(message)) };
+  }
+
+  /**
+   * POST /api/webchat/uploads (CONTRACTS §13) — mesmo storeUpload do agente
+   * autenticado, tenant-scoped pelo orgId do visitorToken (nunca do body).
+   */
+  async uploadMedia(visitorToken: string, file: UploadFileInput | undefined): Promise<StoredUpload> {
+    const token = await this.verifyToken(visitorToken);
+    if (!file) {
+      throw new BadRequestException('Arquivo ausente (campo "file")');
+    }
+    return this.media.storeUpload(token.orgId, file);
+  }
+
+  /**
+   * Coerência content×type do lado do visitante (mesmo espírito de
+   * MessagesService.validateContent): TEXT exige `text` não vazio; tipos de
+   * mídia exigem mediaUrl/mimeType E a mediaUrl DEVE apontar para um upload
+   * do PRÓPRIO POST /webchat/uploads desta org — o widget não tem (e não
+   * deve ganhar) uma aba "por URL" livre, então nunca aceitamos uma mediaUrl
+   * arbitrária vinda do visitante.
+   */
+  private buildVisitorContent(
+    orgId: string,
+    type: MessageType,
+    dto: CreateWebchatMessageDto,
+  ): Record<string, unknown> {
+    if (type === MessageType.TEXT) {
+      const text = dto.text?.trim();
+      if (!text) {
+        throw new BadRequestException('text é obrigatório para mensagens de texto');
+      }
+      return { text };
+    }
+
+    const mediaUrl = dto.mediaUrl?.trim();
+    const mimeType = dto.mimeType?.trim();
+    if (!mediaUrl || !mimeType) {
+      throw new BadRequestException('mediaUrl e mimeType são obrigatórios para mensagens de mídia');
+    }
+    const expectedPrefix = `/api/media/${orgId}/uploads/`;
+    if (!mediaUrl.startsWith(expectedPrefix)) {
+      throw new BadRequestException('mediaUrl inválida — envie o arquivo via POST /api/webchat/uploads');
+    }
+
+    const content: Record<string, unknown> = { mediaUrl, mimeType };
+    const caption = dto.text?.trim();
+    if (caption) {
+      content.caption = caption;
+    }
+    const filename = dto.filename?.trim();
+    if (filename) {
+      content.filename = filename;
+    }
+    return content;
   }
 
   /** GET /api/webchat/messages?after= — mensagens SYSTEM (internas) nunca saem. */

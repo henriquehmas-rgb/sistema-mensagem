@@ -44,6 +44,20 @@ export function createEnvSchema(nodeEnv: string) {
 
     // Diretório da mídia inbound re-hospedada (CONTRACTS §6) — compose: /data/media.
     MEDIA_DIR: z.string().min(1).default('./storage/media'),
+
+    // Cota diária de uploads outbound por org (CONTRACTS §13) — defesa contra
+    // esgotamento de disco do volume media_data (compartilhado entre TODAS as
+    // orgs). Sempre com default: não é segredo, não precisa ser obrigatória em produção.
+    UPLOAD_DAILY_QUOTA_PER_ORG: z.coerce.number().int().positive().default(300),
+
+    // Observabilidade (CONTRACTS §14). METRICS_TOKEN: obrigatório em
+    // produção (sem default — precisa ser gerado); opcional em dev (sem
+    // token, GET /api/metrics fica sempre 401 — ver validateEnv abaixo para
+    // o warning). SENTRY_DSN: sempre opcional, vazio = Sentry desligado.
+    METRICS_TOKEN: prod
+      ? z.string().min(1, 'METRICS_TOKEN é obrigatório em produção — gere com: openssl rand -hex 32')
+      : z.string().optional(),
+    SENTRY_DSN: z.string().optional(),
   });
 }
 
@@ -58,5 +72,15 @@ export function validateEnv(config: Record<string, unknown>): Env {
       .join('\n');
     throw new Error(`Variáveis de ambiente inválidas ou ausentes:\n${issues}`);
   }
+
+  // Fora de produção METRICS_TOKEN é opcional (não derruba o boot), mas sem
+  // ela GET /api/metrics fica sempre 401 — avisa em vez de falhar silencioso.
+  if (nodeEnv !== 'production' && !result.data.METRICS_TOKEN) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[env] METRICS_TOKEN não definido — GET /api/metrics ficará inacessível (401) até você defini-la.',
+    );
+  }
+
   return result.data;
 }

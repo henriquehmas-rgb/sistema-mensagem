@@ -26,7 +26,18 @@ export type AutomationAction =
   | { type: 'add_tag'; tagId: string }
   | { type: 'move_stage'; stageId: string }
   | { type: 'set_status'; status: ConversationStatus }
-  | { type: 'disable_ai' };
+  | { type: 'disable_ai' }
+  | { type: 'send_template'; templateId: string; params?: string[] };
+
+/** Lista de tipos válidos usada nas mensagens de erro de validação (CONTRACTS §12). */
+export const AUTOMATION_ACTION_TYPES = [
+  'assign',
+  'add_tag',
+  'move_stage',
+  'set_status',
+  'disable_ai',
+  'send_template',
+] as const;
 
 export function parseTrigger(value: unknown): AutomationTrigger | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -81,6 +92,21 @@ export function parseAction(value: unknown): AutomationAction | null {
         : null;
     case 'disable_ai':
       return { type: 'disable_ai' };
+    case 'send_template': {
+      if (typeof record.templateId !== 'string' || record.templateId.length === 0) {
+        return null;
+      }
+      if (record.params === undefined) {
+        return { type: 'send_template', templateId: record.templateId };
+      }
+      if (
+        !Array.isArray(record.params) ||
+        !record.params.every((param): param is string => typeof param === 'string')
+      ) {
+        return null;
+      }
+      return { type: 'send_template', templateId: record.templateId, params: record.params };
+    }
     default:
       return null;
   }

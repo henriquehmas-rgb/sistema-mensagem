@@ -83,6 +83,20 @@ enum RunStatus {
   SKIPPED
 }
 
+enum TemplateCategory {
+  MARKETING
+  UTILITY
+  AUTHENTICATION
+}
+
+enum TemplateStatus {
+  APPROVED
+  PENDING
+  REJECTED
+  PAUSED
+  DISABLED
+}
+
 // ============================== Models ==============================
 
 model Organization {
@@ -108,6 +122,7 @@ model Organization {
   knowledgeChunks   KnowledgeChunk[]
   auditLogs         AuditLog[]
   webhookEventLogs  WebhookEventLog[]
+  messageTemplates  MessageTemplate[]
 
   @@map("organizations")
 }
@@ -147,8 +162,9 @@ model Channel {
   createdAt            DateTime      @default(now()) @map("created_at")
   updatedAt            DateTime      @updatedAt @map("updated_at")
 
-  org           Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  org           Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
   conversations Conversation[]
+  templates     MessageTemplate[]
 
   @@index([orgId])
   @@map("channels")
@@ -412,4 +428,30 @@ model WebhookEventLog {
 
   @@index([externalEventId])
   @@map("webhook_event_logs")
+}
+
+/// Templates de mensagem do WhatsApp (CONTRACTS §12) — sincronizados via Graph API
+/// (GET /{wabaId}/message_templates). Nunca deletados: templates que somem da
+/// resposta da Meta viram status=DISABLED (histórico de mensagens referencia o nome).
+model MessageTemplate {
+  id              String           @id @default(cuid())
+  orgId           String           @map("org_id")
+  channelId       String           @map("channel_id")
+  name            String
+  language        String
+  category        TemplateCategory
+  status          TemplateStatus   @default(PENDING)
+  components      Json             @default("[]")
+  bodyParamsCount Int              @default(0) @map("body_params_count")
+  metaTemplateId  String?          @map("meta_template_id")
+  lastSyncedAt    DateTime?        @map("last_synced_at")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  channel Channel      @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, name, language])
+  @@index([orgId])
+  @@map("message_templates")
 }
