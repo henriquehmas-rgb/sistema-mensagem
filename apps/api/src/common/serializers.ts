@@ -44,6 +44,9 @@ export interface ContactDto {
   avatarUrl: string | null;
   notes: string | null;
   customFields: Record<string, unknown>;
+  /** Memória de longo prazo por contato (CONTRACTS §15) — resumo cumulativo gerado pela IA. */
+  memorySummary: string | null;
+  memoryUpdatedAt: string | null;
   createdAt: string;
 }
 
@@ -162,6 +165,8 @@ export function toContactDto(contact: Contact): ContactDto {
     avatarUrl: contact.avatarUrl,
     notes: contact.notes,
     customFields: asRecord(contact.customFields),
+    memorySummary: contact.memorySummary,
+    memoryUpdatedAt: isoOrNull(contact.memoryUpdatedAt),
     createdAt: iso(contact.createdAt),
   };
 }

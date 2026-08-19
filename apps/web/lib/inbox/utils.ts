@@ -3,6 +3,7 @@ import {
   differenceInMinutes,
   differenceInSeconds,
   format,
+  formatDistanceToNow,
   isToday,
   isYesterday,
 } from "date-fns";
@@ -58,6 +59,13 @@ export function formatFullDate(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
   return format(date, "d 'de' MMM 'de' yyyy, HH:mm", { locale: ptBR });
+}
+
+/** Tempo relativo por extenso pt-BR: "há 5 minutos", "há 2 dias" (seção "Memória da IA"). */
+export function formatRelativeLong(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return formatDistanceToNow(date, { addSuffix: true, locale: ptBR });
 }
 
 /** Duração de áudio: "1:05". */

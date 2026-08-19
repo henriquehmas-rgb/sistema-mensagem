@@ -63,9 +63,13 @@ class ChatMessageIn(BaseModel):
 
 
 class ContactInfo(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
 
     name: str | None = None
+    # CONTRACTS §15 — resumo de memória de longo prazo do contato
+    # (`Contact.memorySummary`); a api envia o payload JSON com a chave
+    # literal `memorySummary` (mesmo nome do campo no Prisma/DTO), daí o alias.
+    memory_summary: str | None = Field(default=None, alias="memorySummary")
 
 
 class ReplyRequest(BaseModel):
@@ -81,6 +85,24 @@ class ReplyResponse(BaseModel):
     handoff_reason: str | None = None
     confidence: float
     sources: list[str]
+
+
+MemoryRole = Literal["user", "assistant"]
+
+
+class MemoryMessageIn(BaseModel):
+    role: MemoryRole
+    content: str
+
+
+class MemorySummarizeRequest(BaseModel):
+    org_id: str = Field(min_length=1)
+    existing_summary: str | None = None
+    messages: list[MemoryMessageIn] = Field(default_factory=list)
+
+
+class MemorySummarizeResponse(BaseModel):
+    summary: str | None = None
 
 
 class HealthResponse(BaseModel):

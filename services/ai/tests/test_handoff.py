@@ -15,6 +15,9 @@ POSITIVE_CASES = [
     ("Que merda de serviço é esse?", "linguagem_ofensiva"),
     ("Meu cartão é 4111 1111 1111 1111, pode cobrar", "dados_sensiveis_pagamento"),
     ("O número do meu cartão não está passando, cvv 123", "dados_sensiveis_pagamento"),
+    ("Meu CPF é 123.456.789-00, pode conferir meu cadastro?", "dados_sensiveis_documento"),
+    ("meu cpf eh 12345678900 pode conferir", "dados_sensiveis_documento"),
+    ("Preciso atualizar o número do meu RG no cadastro", "dados_sensiveis_documento"),
 ]
 
 NEGATIVE_CASES = [
@@ -23,6 +26,10 @@ NEGATIVE_CASES = [
     "Quanto custa o plano premium por mês?",
     "Como acompanho o status do meu pedido?",
     "O atendimento de vocês funciona aos sábados?",
+    # Bare "documento" sem cpf/rg/identidade não deve disparar handoff — a
+    # palavra sozinha é comum demais em pt-BR para justificar o falso positivo.
+    "Posso te enviar um documento assinado por aqui?",
+    "Vou precisar de mais um dia útil para separar o pedido, urgente pra mim.",
 ]
 
 

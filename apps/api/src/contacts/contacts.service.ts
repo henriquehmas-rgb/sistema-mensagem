@@ -108,6 +108,12 @@ export class ContactsService {
     if (dto.customFields !== undefined) {
       data.customFields = dto.customFields as Prisma.InputJsonValue;
     }
+    if (dto.memorySummary !== undefined) {
+      // CONTRACTS §15: `null` explícito é o botão "Limpar memória" da UI —
+      // zera também memoryUpdatedAt (não há "atualizado há X" sem resumo).
+      data.memorySummary = dto.memorySummary;
+      data.memoryUpdatedAt = dto.memorySummary === null ? null : new Date();
+    }
 
     try {
       const contact = await this.prisma.tenant.contact.update({ where: { id }, data });

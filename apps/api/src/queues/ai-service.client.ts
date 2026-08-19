@@ -14,6 +14,8 @@ export interface AiReplyRequest {
     name: string;
     phone: string | null;
     email: string | null;
+    /** Memória de longo prazo do contato (CONTRACTS §15) — pode ser null. */
+    memorySummary: string | null;
   };
 }
 
@@ -32,6 +34,22 @@ export interface AiIngestRequest {
   content_url?: string;
   content_text?: string;
   meta: Record<string, unknown>;
+}
+
+/** CONTRACTS §15 — funde `existing_summary` com os fatos novos de `messages`. */
+export interface AiMemorySummarizeRequest {
+  org_id: string;
+  existing_summary: string | null;
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+}
+
+export interface AiMemorySummarizeResponse {
+  /**
+   * Pode vir `null`: o fail-safe do serviço de IA (LLM timeout/erro, ou
+   * conversa sem mensagens) devolve `existing_summary` inalterado — que é
+   * `null` quando o contato ainda não tinha nenhuma memória.
+   */
+  summary: string | null;
 }
 
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -57,6 +75,10 @@ export class AiServiceClient {
 
   async ingest(request: AiIngestRequest): Promise<void> {
     await this.post<unknown>('/ingest', request);
+  }
+
+  async summarizeMemory(request: AiMemorySummarizeRequest): Promise<AiMemorySummarizeResponse> {
+    return this.post<AiMemorySummarizeResponse>('/memory/summarize', request);
   }
 
   private async post<T>(path: string, body: unknown): Promise<T> {

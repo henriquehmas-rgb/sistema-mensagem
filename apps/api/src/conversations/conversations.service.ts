@@ -1,5 +1,7 @@
+import { InjectQueue } from '@nestjs/bullmq';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { ConversationStatus, Prisma } from '@prisma/client';
+import type { Queue } from 'bullmq';
 import { AuditService } from '../audit/audit.service';
 import type { AuthUser } from '../auth/interfaces/auth-user.interface';
 import {
@@ -10,6 +12,7 @@ import {
   type PaginatedDto,
 } from '../common/serializers';
 import { PrismaService } from '../prisma/prisma.service';
+import { QUEUES, type MemorySummarizeJob } from '../queues/queues.constants';
 import { RealtimeService } from '../realtime/realtime.service';
 import { TenancyService } from '../tenancy/tenancy.service';
 import type { MoveConversationDto } from './dto/move-conversation.dto';
@@ -26,6 +29,8 @@ export class ConversationsService {
     private readonly realtime: RealtimeService,
     private readonly tenancy: TenancyService,
     private readonly audit: AuditService,
+    @InjectQueue(QUEUES.MEMORY_SUMMARIZE)
+    private readonly memorySummarizeQueue: Queue<MemorySummarizeJob>,
   ) {}
 
   /** GET /conversations — todos os filtros do CONTRACTS §6, ordenado por lastMessageAt desc. */
@@ -77,9 +82,15 @@ export class ConversationsService {
     return toConversationDto(await this.findOrThrow(id));
   }
 
-  /** PATCH /conversations/:id — assignee/status/stage/aiEnabled + AuditLog. */
+  /**
+   * PATCH /conversations/:id — assignee/status/stage/aiEnabled + AuditLog.
+   * CONTRACTS §15: lê o status ANTERIOR antes do update — transição PARA
+   * RESOLVED (de qualquer status que NÃO seja já RESOLVED) enfileira
+   * `memory-summarize`. Idempotente: RESOLVED→RESOLVED (nenhuma mudança real,
+   * ou reenvio do mesmo PATCH) não re-dispara.
+   */
   async update(id: string, dto: UpdateConversationDto, actor: AuthUser): Promise<ConversationDto> {
-    await this.findOrThrow(id);
+    const before = await this.findOrThrow(id);
 
     const data: Prisma.ConversationUncheckedUpdateInput = {};
 
@@ -121,6 +132,16 @@ export class ConversationsService {
       entityId: id,
       meta: { fields: Object.keys(data), by: actor.userId },
     });
+
+    const enteringResolved =
+      dto.status === ConversationStatus.RESOLVED && before.status !== ConversationStatus.RESOLVED;
+    if (enteringResolved) {
+      await this.memorySummarizeQueue.add('summarize', {
+        orgId: this.tenancy.getOrgIdOrThrow(),
+        contactId: before.contactId,
+        conversationId: id,
+      });
+    }
 
     return this.emitUpdated(id);
   }

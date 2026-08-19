@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Loader2, Plus, Tag as TagIcon, X } from "lucide-react";
+import { Brain, Check, Loader2, Plus, Tag as TagIcon, X } from "lucide-react";
 
 import type { ConversationDto } from "@sm/shared";
 
@@ -32,7 +32,7 @@ import {
   useTags,
   useUpdateContact,
 } from "@/lib/inbox/hooks";
-import { formatFullDate, formatRelativeShort } from "@/lib/inbox/utils";
+import { formatFullDate, formatRelativeLong, formatRelativeShort } from "@/lib/inbox/utils";
 import { cn } from "@/lib/utils";
 
 import { CHANNEL_LABELS, ChannelIcon } from "./channel-icons";
@@ -192,6 +192,18 @@ export function CrmPanel({ conversation, onSelectConversation }: CrmPanelProps) 
     setCustomField(key, newFieldValue.trim());
     setNewFieldKey("");
     setNewFieldValue("");
+  };
+
+  // -------------------------------------------------------------------------
+  // Memória de longo prazo (CONTRACTS §15) — somente leitura + limpar
+  // -------------------------------------------------------------------------
+  const handleClearMemory = (): void => {
+    if (!contact.memorySummary) return;
+    const confirmed = window.confirm(
+      "Limpar a memória da IA para este contato? Essa ação não pode ser desfeita.",
+    );
+    if (!confirmed) return;
+    mutateContact({ id: contact.id, input: { memorySummary: null } });
   };
 
   // -------------------------------------------------------------------------
@@ -543,6 +555,49 @@ export function CrmPanel({ conversation, onSelectConversation }: CrmPanelProps) 
               <Plus className="h-3.5 w-3.5" />
             </Button>
           </div>
+        </div>
+
+        <Separator />
+
+        {/* Memória da IA */}
+        <div className="space-y-2 p-4">
+          <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <Brain className="h-3.5 w-3.5" />
+            Memória da IA
+          </h3>
+          <p className="text-[11px] text-muted-foreground">
+            Resumo que a IA mantém sobre este contato, atualizado ao fim de cada conversa
+            resolvida — usado para lembrar contexto em conversas futuras.
+          </p>
+          {contact.memorySummary ? (
+            <div className="space-y-1.5">
+              <p className="whitespace-pre-wrap rounded-md border bg-muted/40 p-2.5 text-xs leading-relaxed">
+                {contact.memorySummary}
+              </p>
+              <div className="flex items-center justify-between gap-2">
+                {contact.memoryUpdatedAt ? (
+                  <span className="text-[10px] text-muted-foreground">
+                    Atualizado {formatRelativeLong(contact.memoryUpdatedAt)}
+                  </span>
+                ) : (
+                  <span />
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-[11px] text-muted-foreground hover:text-destructive"
+                  onClick={handleClearMemory}
+                  disabled={updateContact.isPending}
+                >
+                  Limpar memória
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Nenhuma memória ainda — a IA aprende conversa a conversa.
+            </p>
+          )}
         </div>
 
         <Separator />

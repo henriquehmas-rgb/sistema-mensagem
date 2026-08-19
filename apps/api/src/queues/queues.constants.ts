@@ -10,6 +10,7 @@ export const QUEUES = {
   AUTOMATION_RUN: 'automation-run',
   KNOWLEDGE_INGEST: 'knowledge-ingest',
   MEDIA_CLEANUP: 'media-cleanup',
+  MEMORY_SUMMARIZE: 'memory-summarize',
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
@@ -81,3 +82,15 @@ export interface KnowledgeIngestJob {
  * (MediaCleanupService.run). Agendado por MediaCleanupScheduler.
  */
 export type MediaCleanupJob = Record<string, never>;
+
+/**
+ * CONTRACTS §15: memória de longo prazo por contato. Produzido por
+ * `ConversationsService.update` quando uma conversa transiciona PARA
+ * RESOLVED (idempotente — não re-dispara em RESOLVED→RESOLVED nem em
+ * reaberturas). Consumido por `MemorySummarizeProcessor`.
+ */
+export interface MemorySummarizeJob {
+  orgId: string;
+  contactId: string;
+  conversationId: string;
+}

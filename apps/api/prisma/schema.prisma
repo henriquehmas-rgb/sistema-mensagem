@@ -171,16 +171,22 @@ model Channel {
 }
 
 model Contact {
-  id           String   @id @default(cuid())
-  orgId        String   @map("org_id")
-  name         String
-  phone        String?
-  email        String?
-  avatarUrl    String?  @map("avatar_url")
-  notes        String?
-  customFields Json     @default("{}") @map("custom_fields")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id              String    @id @default(cuid())
+  orgId           String    @map("org_id")
+  name            String
+  phone           String?
+  email           String?
+  avatarUrl       String?   @map("avatar_url")
+  notes           String?
+  customFields    Json      @default("{}") @map("custom_fields")
+  // CONTRACTS §15: memória de longo prazo por contato — resumo cumulativo
+  // fundido pelo processor `memory-summarize` ao fim de cada conversa
+  // resolvida (services/ai POST /memory/summarize). 1:1 com o contato, não é
+  // entidade separada.
+  memorySummary   String?   @map("memory_summary")
+  memoryUpdatedAt DateTime? @map("memory_updated_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
 
   org           Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
   identities    ContactIdentity[]

@@ -217,3 +217,55 @@ e `knowledge_chunks` diretamente via SQL usando exatamente esses nomes.
   `METRICS_TOKEN` obrigatória em produção pelo mesmo `env.validation.ts`).
 - **docker-compose**: nenhum serviço novo — tudo dentro do container `api`; `infra/README.md`
   documenta como consultar `/api/metrics` e `/admin/queues` a partir da VPS.
+
+## 15. Memória de longo prazo por contato (Wave D)
+- **Motivo**: a IA hoje só enxerga as últimas 12 mensagens da conversa atual (curto prazo,
+  `ai-reply.processor.ts`, `HISTORY_SIZE`) e o conhecimento genérico da org via RAG — nada
+  persiste entre conversas diferentes do MESMO contato. Adiciona um resumo cumulativo por
+  contato, atualizado ao fim de cada conversa resolvida.
+- **Campos novos em Contact** (não é entidade separada — 1:1 com o contato):
+  `memorySummary String?` (texto livre, cap ~1500 chars), `memoryUpdatedAt DateTime?`.
+  Mapeamento snake_case §11 na tabela `contacts`: `memory_summary`, `memory_updated_at`.
+  Migration incremental nova (padrão de `000000000001_add_message_templates` — NÃO editar
+  migrations existentes).
+- **Gatilho**: em `ConversationsService.update` (apps/api/src/conversations/conversations.service.ts),
+  quando `dto.status === ConversationStatus.RESOLVED` E o status ANTERIOR da conversa (leia
+  ANTES do update) não era já `RESOLVED` — idempotência, não re-resumir ao reabrir/re-resolver
+  sem mensagens novas — enfileira `memory-summarize` (fila BullMQ NOVA, prefixo `sm`,
+  attempts:3, backoff exponencial, mesmo padrão das demais) com `{orgId, contactId, conversationId}`.
+- **Processor `memory-summarize`** (api, novo, mesmo diretório de `queues/processors/`): busca
+  as mensagens TEXT da conversa (mídia vira placeholder `"[enviou uma imagem/áudio/documento]"`
+  conforme o tipo), o `memorySummary` atual do contato, chama o serviço de ia
+  `POST /memory/summarize` (header `X-Service-Token`, mesmo padrão de `/reply` e `/ingest`),
+  grava `Contact.memorySummary`/`memoryUpdatedAt` via `prismaSystem` (orgId manual do payload),
+  emite `contact:updated` (evento JÁ EXISTENTE em `packages/shared/src/socket.ts` — mesmo
+  formato `{contact}`, nenhuma mudança de contrato ali).
+- **Serviço de IA — `POST /memory/summarize {org_id, existing_summary, messages}` → `{summary}`**:
+  usa o MESMO provider/config de `/reply` (incluindo `mock` determinístico p/ dev sem chave);
+  funde o resumo existente com os fatos novos da conversa. GUARDRAILS: extrair só fatos
+  OBJETIVOS explicitamente ditos pelo contato (preferências, contexto recorrente, decisões,
+  dados que ele mesmo informou) — NUNCA inferir/especular, NUNCA reter dado sensível de
+  pagamento/documento (mesma heurística de detecção usada no handoff, `handoff.py` —
+  `detect_sensitive_data`, que cobre cartão/CVV E CPF/RG/documento — serve de referência
+  e é reaproveitada diretamente para blindar o conteúdo antes de chegar ao LLM); resultado
+  cap ~1500 chars (`get_settings().memory_summary_max_chars`, fonte única compartilhada
+  entre o truncamento e o texto da instrução ao LLM) — implementado como **truncamento
+  seguro por corte em fronteira de frase/palavra** (`_truncate_summary`), SEM re-chamar o
+  LLM para re-resumir (decisão de MVP; não é uma segunda chamada ao provedor); fail-safe:
+  qualquer erro (LLM, timeout) retorna `{summary: existing_summary}` inalterado — o
+  processor da api NUNCA apaga memória por falha, e só grava `memoryUpdatedAt` quando o
+  `summary` devolvido difere do `memorySummary` atual do contato.
+- **Injeção no `/reply` existente** (CONTRACTS §7, SEM mudar o formato do endpoint): o payload
+  `contact:{...}` que a api já envia ganha o campo `memorySummary` (pode ser `null`). O system
+  prompt do LLM (`services/ai/src/llm/prompts.py`) trata isso como "contexto sobre o contato"
+  DISTINTO do RAG (conhecimento da empresa) e do histórico da conversa atual — rotulado
+  explicitamente para o modelo não confundir a fonte nem tratar como instrução do usuário.
+- **UI**: `crm-panel.tsx` (apps/web, inbox) ganha uma seção "Memória da IA" — somente leitura
+  (texto do `memorySummary` + "atualizado há X" relativo, ou estado vazio "Nenhuma memória
+  ainda"), com botão "Limpar memória" (reaproveita `PATCH /contacts/:id` já existente, campo
+  novo `memorySummary: null`) e uma frase curta explicando o que é.
+- **Rotas REST reaproveitadas** — SEM endpoint público novo na api: `ContactDto`
+  (`packages/shared/src/models.ts`) ganha `memorySummary: string | null` e
+  `memoryUpdatedAt: string | null`; `GET/PATCH /contacts/:id` (CONTRACTS §6) já cobre leitura e
+  limpeza — `UpdateContactDto` ganha `memorySummary?: string | null` opcional (ADMIN/SUPERVISOR
+  — checar/alinhar RBAC do PATCH existente).

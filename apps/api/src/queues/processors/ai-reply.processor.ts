@@ -127,6 +127,7 @@ export class AiReplyProcessor extends WorkerHost {
           name: conversation.contact.name,
           phone: conversation.contact.phone,
           email: conversation.contact.email,
+          memorySummary: conversation.contact.memorySummary,
         },
       });
     } finally {

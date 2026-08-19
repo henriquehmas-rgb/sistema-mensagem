@@ -7,14 +7,14 @@ Fail-safe absoluto: qualquer erro (DB, LLM, timeout) retorna 200 com
 from __future__ import annotations
 
 import logging
-from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter
 
 from .. import retrieval
 from ..config import get_settings
 from ..handoff import HEURISTIC_HANDOFF_CONFIDENCE, detect_handoff, parse_llm_reply
-from ..llm import ChatMessage, ChatProvider, get_chat_provider
+from ..llm import ChatMessage, get_chat_provider
+from ..llm.executor import generate_with_timeout
 from ..llm.prompts import build_system_prompt
 from ..schemas import ReplyRequest, ReplyResponse
 from ..textutils import clamp01
@@ -26,14 +26,6 @@ router = APIRouter(tags=["reply"])
 _MAX_HISTORY_MESSAGES = 10
 _LLM_HANDOFF_CONFIDENCE = 0.8
 
-# Executor COMPARTILHADO do modulo: criar um ThreadPoolExecutor por request
-# vazaria threads nao-daemon a cada timeout (cancel_futures nao interrompe uma
-# future JA em execucao). Com o pool fixo, no pior caso ficam max_workers
-# threads ocupadas ate o timeout do proprio client do provedor encerrar a
-# chamada — esse timeout e configurado com llm_timeout_seconds (mantidos
-# alinhados; ver get_chat_provider).
-_LLM_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="llm")
-
 
 def _handoff(reason: str, confidence: float = HEURISTIC_HANDOFF_CONFIDENCE) -> ReplyResponse:
     return ReplyResponse(
@@ -43,26 +35,6 @@ def _handoff(reason: str, confidence: float = HEURISTIC_HANDOFF_CONFIDENCE) -> R
         confidence=confidence,
         sources=[],
     )
-
-
-def _generate_with_timeout(
-    provider: ChatProvider,
-    messages: list[ChatMessage],
-    system: str,
-    timeout: float,
-) -> str:
-    """Executa o LLM com limite rigido de parede (TimeoutError apos `timeout`s).
-
-    O cancelamento REAL de uma chamada em andamento depende do timeout do client
-    do provedor (igual a llm_timeout_seconds); aqui so garantimos a resposta
-    rapida ao chamador e removemos da fila futures que nem comecaram.
-    """
-    future = _LLM_EXECUTOR.submit(provider.generate, messages, system)
-    try:
-        return future.result(timeout=timeout)
-    except TimeoutError:
-        future.cancel()  # no-op se ja em execucao; evita rodar futures enfileiradas
-        raise
 
 
 def _pipeline(payload: ReplyRequest) -> ReplyResponse:
@@ -83,11 +55,14 @@ def _pipeline(payload: ReplyRequest) -> ReplyResponse:
     if not chunks:
         return _handoff("sem_contexto_na_base_de_conhecimento", confidence=0.0)
 
-    # (c) System prompt com guardrails + contexto.
+    # (c) System prompt com guardrails + contexto + memória de longo prazo
+    # do contato (CONTRACTS §15) — bloco distinto, rotulado como referência.
     contact_name = payload.contact.name if payload.contact else None
+    memory_summary = payload.contact.memory_summary if payload.contact else None
     system = build_system_prompt(
         chunks=[chunk.content for chunk in chunks],
         contact_name=contact_name,
+        memory_summary=memory_summary,
     )
 
     # (d) LLM com timeout rigido de 30s.
@@ -99,7 +74,7 @@ def _pipeline(payload: ReplyRequest) -> ReplyResponse:
 
     provider = get_chat_provider()
     try:
-        raw_reply = _generate_with_timeout(
+        raw_reply = generate_with_timeout(
             provider, history, system, timeout=get_settings().llm_timeout_seconds
         )
     except TimeoutError:

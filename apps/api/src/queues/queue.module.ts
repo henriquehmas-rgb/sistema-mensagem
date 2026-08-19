@@ -6,6 +6,7 @@ import { AiServiceClient } from './ai-service.client';
 import { AiReplyProcessor } from './processors/ai-reply.processor';
 import { AutomationRunProcessor } from './processors/automation-run.processor';
 import { KnowledgeIngestProcessor } from './processors/knowledge-ingest.processor';
+import { MemorySummarizeProcessor } from './processors/memory-summarize.processor';
 import { MessageOutboundProcessor } from './processors/message-outbound.processor';
 import { QUEUES } from './queues.constants';
 
@@ -25,6 +26,7 @@ import { QUEUES } from './queues.constants';
       { name: QUEUES.AI_REPLY },
       { name: QUEUES.AUTOMATION_RUN },
       { name: QUEUES.KNOWLEDGE_INGEST },
+      { name: QUEUES.MEMORY_SUMMARIZE },
     ),
     // MetaGraphService — envio real WhatsApp no MessageOutboundProcessor.
     ChannelsModule,
@@ -40,6 +42,7 @@ import { QUEUES } from './queues.constants';
     AiReplyProcessor,
     AutomationRunProcessor,
     KnowledgeIngestProcessor,
+    MemorySummarizeProcessor,
   ],
   exports: [BullModule],
 })

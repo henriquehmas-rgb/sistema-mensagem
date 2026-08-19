@@ -231,6 +231,8 @@ export interface UpdateContactInput {
   email?: string | null;
   notes?: string | null;
   customFields?: Record<string, unknown>;
+  /** CONTRACTS §15 — `null` limpa a memória de longo prazo (botão "Limpar memória"). */
+  memorySummary?: string | null;
 }
 
 export function updateContact(

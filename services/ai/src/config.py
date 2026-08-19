@@ -91,6 +91,12 @@ class Settings(BaseSettings):
     chunk_overlap: int = 400
     retrieval_top_k: int = 6
 
+    # CONTRACTS §15 — cap do resumo de memoria de longo prazo por contato.
+    # Fonte UNICA: usado tanto para o truncamento em routes/memory.py quanto
+    # no texto da instrucao ao LLM em llm/prompts.py::build_memory_prompt —
+    # nao duplicar este numero em outro lugar.
+    memory_summary_max_chars: int = 1500
+
     @property
     def psycopg_dsn(self) -> str:
         """DATABASE_URL normalizada para o formato aceito pelo psycopg."""

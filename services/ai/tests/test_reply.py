@@ -128,3 +128,69 @@ def test_reply_without_user_message_is_handoff(client, auth_headers) -> None:
     response = client.post("/reply", json=body, headers=auth_headers)
     assert response.status_code == 200
     assert response.json()["handoff"] is True
+
+
+# ---------------------------------------------------- memoria de longo prazo (CONTRACTS §15)
+class _SpySystemPromptProvider:
+    """Provider fake que so captura o `system` recebido, sem chamar rede nenhuma."""
+
+    name = "spy"
+
+    def __init__(self) -> None:
+        self.captured_system: str | None = None
+
+    def generate(self, messages, system):  # noqa: ANN001 — assinatura do ChatProvider
+        self.captured_system = system
+        return "Resposta qualquer, sem HANDOFF."
+
+
+def test_contact_memory_summary_is_injected_as_distinct_labeled_block(
+    client, auth_headers, monkeypatch
+) -> None:
+    """CONTRACTS §15: `contact.memorySummary` (pode vir null) precisa chegar ao
+    system prompt do LLM em /reply, num bloco DISTINTO do CONTEXTO (RAG) e do
+    histórico da conversa, rotulado como referência — não instrução."""
+    from src.llm.prompts import CONTACT_MEMORY_END, CONTACT_MEMORY_START
+    from src.routes import reply as reply_route
+
+    chunks = [
+        RetrievedChunk(content="Prazo de entrega: 3 dias úteis.", score=0.9, source_id="src_1")
+    ]
+    monkeypatch.setattr(retrieval, "search", lambda org_id, query, top_k=6: chunks)
+    spy = _SpySystemPromptProvider()
+    monkeypatch.setattr(reply_route, "get_chat_provider", lambda: spy)
+
+    body = {
+        "org_id": "org_1",
+        "conversation_id": "conv_1",
+        "contact": {"name": "Ana", "memorySummary": "Cliente prefere WhatsApp à tarde."},
+        "messages": [{"role": "user", "content": "Qual o prazo de entrega?"}],
+    }
+    response = client.post("/reply", json=body, headers=auth_headers)
+    assert response.status_code == 200
+
+    assert spy.captured_system is not None
+    assert CONTACT_MEMORY_START in spy.captured_system
+    assert CONTACT_MEMORY_END in spy.captured_system
+    assert "Cliente prefere WhatsApp à tarde." in spy.captured_system
+    # Distinto do CONTEXTO (RAG) — o mesmo prompt ainda carrega os dois blocos.
+    assert "### CONTEXTO" in spy.captured_system
+
+
+def test_null_contact_memory_summary_omits_the_block(
+    client, auth_headers, monkeypatch
+) -> None:
+    from src.llm.prompts import CONTACT_MEMORY_START
+    from src.routes import reply as reply_route
+
+    chunks = [
+        RetrievedChunk(content="Prazo de entrega: 3 dias úteis.", score=0.9, source_id="src_1")
+    ]
+    monkeypatch.setattr(retrieval, "search", lambda org_id, query, top_k=6: chunks)
+    spy = _SpySystemPromptProvider()
+    monkeypatch.setattr(reply_route, "get_chat_provider", lambda: spy)
+
+    response = _reply(client, auth_headers, "Qual o prazo de entrega?")
+    assert response.status_code == 200
+    assert spy.captured_system is not None
+    assert CONTACT_MEMORY_START not in spy.captured_system

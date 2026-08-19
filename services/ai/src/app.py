@@ -18,6 +18,7 @@ from .auth import require_service_token
 from .observability import capture_exception, init_sentry
 from .routes.health import router as health_router
 from .routes.ingest import router as ingest_router
+from .routes.memory import router as memory_router
 from .routes.query import router as query_router
 from .routes.reply import router as reply_router
 
@@ -89,6 +90,7 @@ def create_app() -> FastAPI:
     protected.include_router(ingest_router)
     protected.include_router(query_router)
     protected.include_router(reply_router)
+    protected.include_router(memory_router)
     app.include_router(protected)
 
     return app
