@@ -97,6 +97,117 @@ enum TemplateStatus {
   DISABLED
 }
 
+enum FollowUpStatus {
+  SCHEDULED
+  READY_FOR_REVIEW
+  PAUSED
+  CANCELLED
+  COMPLETED
+}
+
+enum LearningCandidateStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum KnowledgeGapStatus {
+  PENDING
+  ANSWERED
+  APPLIED
+  DISMISSED
+}
+
+enum OperationalSkillStatus {
+  DRAFT
+  IN_REVIEW
+  APPROVED
+  ACTIVE
+  SUSPENDED
+  REPLACED
+}
+
+enum OperationalActionRequestStatus {
+  PENDING_REVIEW
+  APPROVED
+  READY_TO_TRIGGER
+  PROCESSING
+  COMPLETED
+  FAILED
+  UNCERTAIN
+  DUPLICATE_FOUND
+  BLOCKED
+  REJECTED
+  CANCELLED
+}
+
+enum GlobalDirectiveStatus {
+  DRAFT
+  IN_REVIEW
+  APPROVED
+  ACTIVE
+  SUSPENDED
+  REPLACED
+}
+
+/// Vínculo privado entre uma referência do IXC e a topologia observada no
+/// Olho de Deus. A referência nunca é exposta no runtime nem enviada ao RAG.
+enum NetworkTopologyMappingKind {
+  IXC_CUSTOMER
+  IXC_CONNECTION
+  IXC_FTTH_BOX
+  IXC_CONCENTRATOR
+  REGION
+}
+
+/// SHADOW não pode influenciar decisão. CONFIRMED exige evidência técnica
+/// auditada; RETIRED preserva histórico sem continuar sendo consultado.
+enum NetworkTopologyMappingStatus {
+  SHADOW
+  CONFIRMED
+  RETIRED
+}
+
+/// Incidente técnico operacional. Não é uma fila de aprendizagem e não guarda
+/// conteúdo de conversa, identificadores de cliente, credenciais ou evidência
+/// factual em texto livre.
+enum OperationalIncidentSeverity {
+  P1
+  P2
+  P3
+}
+
+enum OperationalIncidentStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+/// Funil comercial separado das etapas operacionais da conversa. O status da
+/// oportunidade jamais altera por si só a Conversation nem habilita envios.
+enum SalesOpportunityStatus {
+  OPEN
+  ON_HOLD
+  WON
+  LOST
+}
+
+enum SalesStageCategory {
+  NEW
+  QUALIFYING
+  PROPOSAL
+  NEGOTIATION
+  WON
+  LOST
+  ON_HOLD
+}
+
+enum SalesTaskStatus {
+  OPEN
+  COMPLETED
+  CANCELLED
+}
+
 // ============================== Models ==============================
 
 model Organization {
@@ -113,6 +224,17 @@ model Organization {
   contacts          Contact[]
   contactIdentities ContactIdentity[]
   pipelineStages    PipelineStage[]
+  departments       Department[]
+  resolutionReasons ResolutionReason[]
+  ixcIntegration IxcIntegration?
+  olhoDeDeusIntegration OlhoDeDeusIntegration?
+  networkTopologyMappings NetworkTopologyMapping[]
+  networkTopologyCalibrationEvidence NetworkTopologyCalibrationEvidence[]
+  learningCandidates LearningCandidate[]
+  languageVariants   LanguageVariant[]
+  knowledgeGaps      KnowledgeGap[]
+  operationalActionRequests OperationalActionRequest[]
+  globalDirectives GlobalDirective[]
   conversations     Conversation[]
   messages          Message[]
   tags              Tag[]
@@ -123,8 +245,101 @@ model Organization {
   auditLogs         AuditLog[]
   webhookEventLogs  WebhookEventLog[]
   messageTemplates  MessageTemplate[]
+  operationalSkills OperationalSkill[]
+  aiUsageEvents      AiUsageEvent[]
+  aiBudgetAlerts     AiBudgetAlert[]
+  operationalIncidents OperationalIncident[]
+  operationalStates  ConversationOperationalState[]
+  followUpSequences  FollowUpSequence[]
+  salesPipelines     SalesPipeline[]
+  salesStages        SalesStage[]
+  salesOpportunities SalesOpportunity[]
+  salesTasks         SalesTask[]
+  salesActivities    SalesActivity[]
+  readinessSnapshots ReadinessSnapshot[]
 
   @@map("organizations")
+}
+
+model IxcIntegration {
+  id                   String   @id @default(cuid())
+  orgId                String   @unique @map("org_id")
+  baseUrl              String   @map("base_url")
+  encryptedCredentials String   @map("encrypted_credentials")
+  isEnabled            Boolean  @default(false) @map("is_enabled")
+  lastTestedAt         DateTime? @map("last_tested_at")
+  lastTestSucceeded    Boolean?  @map("last_test_succeeded")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@map("ixc_integrations")
+}
+
+/// Configuração da fonte técnica Olho de Deus. Esta integração é somente
+/// leitura e não substitui o IXC como sistema de registro ou executor de OS.
+model OlhoDeDeusIntegration {
+  id                   String   @id @default(cuid())
+  orgId                String   @unique @map("org_id")
+  baseUrl              String   @map("base_url")
+  allowedHosts         String   @map("allowed_hosts")
+  encryptedCredentials String   @map("encrypted_credentials")
+  allowInsecureHttp    Boolean  @default(false) @map("allow_insecure_http")
+  isEnabled            Boolean  @default(false) @map("is_enabled")
+  lastTestedAt         DateTime? @map("last_tested_at")
+  lastTestSucceeded    Boolean?  @map("last_test_succeeded")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@map("olho_de_deus_integrations")
+}
+
+/// Ponte própria IXC -> topologia. Guarda somente HMAC para busca e a carga
+/// cifrada para administração; nunca um endereço ou identificador em texto.
+model NetworkTopologyMapping {
+  id                  String                       @id @default(cuid())
+  orgId               String                       @map("org_id")
+  referenceKind       NetworkTopologyMappingKind   @map("reference_kind")
+  referenceFingerprint String                      @map("reference_fingerprint")
+  encryptedReference  String                       @map("encrypted_reference")
+  topologyFingerprint String                       @map("topology_fingerprint")
+  encryptedTopology   String                       @map("encrypted_topology")
+  status              NetworkTopologyMappingStatus @default(SHADOW)
+  evidenceReference   String?                      @map("evidence_reference")
+  confirmedAt         DateTime?                    @map("confirmed_at")
+  retiredAt           DateTime?                    @map("retired_at")
+  createdAt           DateTime                     @default(now()) @map("created_at")
+  updatedAt           DateTime                     @updatedAt @map("updated_at")
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  calibrationEvidence NetworkTopologyCalibrationEvidence[]
+
+  @@unique([orgId, referenceKind, referenceFingerprint, topologyFingerprint])
+  @@index([orgId, status, referenceKind])
+  @@map("network_topology_mappings")
+}
+
+/// Evidência de calibração para uma correlação IXC -> topologia. Os
+/// identificadores externos são guardados somente como HMAC; não há cliente,
+/// caixa, evento ou rota em texto claro nesta tabela.
+model NetworkTopologyCalibrationEvidence {
+  id                  String   @id @default(cuid())
+  orgId               String   @map("org_id")
+  mappingId           String   @map("mapping_id")
+  eventFingerprint    String   @map("event_fingerprint")
+  evidenceFingerprint String   @map("evidence_fingerprint")
+  observedAt          DateTime @map("observed_at")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  org     Organization            @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  mapping NetworkTopologyMapping @relation(fields: [mappingId], references: [id], onDelete: Cascade)
+
+  @@unique([mappingId, eventFingerprint])
+  @@index([orgId, mappingId, observedAt])
+  @@map("network_topology_calibration_evidence")
 }
 
 model User {
@@ -134,6 +349,7 @@ model User {
   email        String
   passwordHash String    @map("password_hash")
   role         Role      @default(AGENT)
+  departmentId String?   @map("department_id")
   avatarUrl    String?   @map("avatar_url")
   isActive     Boolean   @default(true) @map("is_active")
   lastSeenAt   DateTime? @map("last_seen_at")
@@ -141,10 +357,18 @@ model User {
   updatedAt    DateTime  @updatedAt @map("updated_at")
 
   org                   Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  department            Department?   @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   refreshTokens         RefreshToken[]
   assignedConversations Conversation[] @relation("ConversationAssignee")
   authoredMessages      Message[]      @relation("MessageAuthor")
   auditLogs             AuditLog[]
+  answeredKnowledgeGaps KnowledgeGap[] @relation("KnowledgeGapResponder")
+  assignedSalesOpportunities SalesOpportunity[] @relation("SalesOpportunityAssignee")
+  createdSalesOpportunities  SalesOpportunity[] @relation("SalesOpportunityCreator")
+  assignedSalesTasks         SalesTask[]        @relation("SalesTaskAssignee")
+  authoredSalesActivities    SalesActivity[]    @relation("SalesActivityAuthor")
+  readinessSnapshots         ReadinessSnapshot[] @relation("ReadinessSnapshotCreator")
+  responsibleFollowUpSequences FollowUpSequence[] @relation("FollowUpSequenceResponsible")
 
   @@unique([orgId, email])
   @@map("users")
@@ -191,6 +415,7 @@ model Contact {
   org           Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
   identities    ContactIdentity[]
   conversations Conversation[]
+  salesOpportunities SalesOpportunity[]
 
   @@unique([orgId, phone])
   @@map("contacts")
@@ -230,14 +455,159 @@ model PipelineStage {
   @@map("pipeline_stages")
 }
 
+model Department {
+  id          String   @id @default(cuid())
+  orgId       String   @map("org_id")
+  name        String
+  description String?
+  color       String   @default("#6366f1")
+  routingKey  String?  @map("routing_key")
+  isDefault   Boolean  @default(false) @map("is_default")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  org           Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+  users         User[]
+  knowledgeGaps KnowledgeGap[]
+  operationalSkills OperationalSkill[]
+  salesPipelines     SalesPipeline[]
+  salesOpportunities SalesOpportunity[]
+
+  @@unique([orgId, name])
+  @@unique([orgId, routingKey])
+  @@index([orgId, isActive])
+  @@map("departments")
+}
+
+/// Protocolo operacional versionado. Uma skill descreve quando e como o Omni
+/// pode agir; criar uma versão nunca altera silenciosamente a versão ativa.
+model OperationalSkill {
+  id                   String                 @id @default(cuid())
+  orgId                String                 @map("org_id")
+  departmentId         String?                @map("department_id")
+  key                  String
+  name                 String
+  description          String?
+  version              Int                    @default(1)
+  status               OperationalSkillStatus @default(DRAFT)
+  triggerConditions    Json                   @default("[]") @map("trigger_conditions")
+  requiredData         Json                   @default("[]") @map("required_data")
+  allowedSources       Json                   @default("[]") @map("allowed_sources")
+  protocolSteps        Json                   @default("[]") @map("protocol_steps")
+  allowedActions       Json                   @default("[]") @map("allowed_actions")
+  forbiddenActions     Json                   @default("[]") @map("forbidden_actions")
+  completionCriteria   Json                   @default("[]") @map("completion_criteria")
+  reviewConditions     Json                   @default("[]") @map("review_conditions")
+  humanHandoffConditions Json                 @default("[]") @map("human_handoff_conditions")
+  identityRequirement  String                 @default("NONE") @map("identity_requirement")
+  minimumConfidence    Float                  @default(0.8) @map("minimum_confidence")
+  owner                String?
+  validUntil           DateTime?              @map("valid_until")
+  createdAt            DateTime               @default(now()) @map("created_at")
+  updatedAt            DateTime               @updatedAt @map("updated_at")
+
+  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  department Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  actionRequests OperationalActionRequest[]
+
+  @@unique([orgId, key, version])
+  @@index([orgId, status])
+  @@index([orgId, departmentId, status])
+  @@map("operational_skills")
+}
+
+model OperationalActionRequest {
+  id                 String                         @id @default(cuid())
+  orgId              String                         @map("org_id")
+  conversationId     String                         @map("conversation_id")
+  skillId            String                         @map("skill_id")
+  requestedAction    String                         @map("requested_action")
+  requestPayload     Json                           @default("{}") @map("request_payload")
+  deduplicationKey   String                         @map("deduplication_key")
+  status             OperationalActionRequestStatus @default(PENDING_REVIEW)
+  requestedById      String?                        @map("requested_by_id")
+  reviewedById       String?                        @map("reviewed_by_id")
+  reviewNote         String?                        @map("review_note")
+  reviewedAt         DateTime?                      @map("reviewed_at")
+  createdAt          DateTime                       @default(now()) @map("created_at")
+  updatedAt          DateTime                       @updatedAt @map("updated_at")
+
+  org          Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  conversation Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  skill        OperationalSkill @relation(fields: [skillId], references: [id], onDelete: Restrict)
+
+  @@unique([orgId, deduplicationKey])
+  @@index([orgId, status, createdAt])
+  @@index([orgId, conversationId])
+  @@map("operational_action_requests")
+}
+
+model GlobalDirective {
+  id           String                @id @default(cuid())
+  orgId        String                @map("org_id")
+  key          String
+  title        String
+  category     String
+  version      Int                   @default(1)
+  status       GlobalDirectiveStatus @default(DRAFT)
+  priority     Int                   @default(100)
+  principles   Json                  @default("[]")
+  prohibitions Json                  @default("[]")
+  owner        String?
+  validUntil   DateTime?             @map("valid_until")
+  createdAt    DateTime              @default(now()) @map("created_at")
+  updatedAt    DateTime              @updatedAt @map("updated_at")
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, key, version])
+  @@index([orgId, status, priority])
+  @@map("global_directives")
+}
+
+model ResolutionReason {
+  id        String   @id @default(cuid())
+  orgId     String   @map("org_id")
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  org           Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+
+  @@unique([orgId, name])
+  @@index([orgId, isActive])
+  @@map("resolution_reasons")
+}
+
 model Conversation {
   id                 String             @id @default(cuid())
+  protocol           String             @unique
   orgId              String             @map("org_id")
   contactId          String             @map("contact_id")
   channelId          String             @map("channel_id")
   status             ConversationStatus @default(OPEN)
   assigneeId         String?            @map("assignee_id")
   stageId            String?            @map("stage_id")
+  departmentId       String?            @map("department_id")
+  resolutionReasonId String?            @map("resolution_reason_id")
+  resolutionNote     String?            @map("resolution_note")
+  resolvedAt         DateTime?          @map("resolved_at")
+  lastIntent         String?            @map("last_intent")
+  secondaryIntent    String?            @map("secondary_intent")
+  alternativeRouteKey String?           @map("alternative_route_key")
+  triageConflict     Boolean            @default(false) @map("triage_conflict")
+  routingEvidence    Json               @default("[]") @map("routing_evidence")
+  triageConfidence   Float?             @map("triage_confidence")
+  triagedAt          DateTime?          @map("triaged_at")
+  caseSummary        String?            @map("case_summary")
+  clarificationCount Int                @default(0) @map("clarification_count")
+  identityVerifiedAt DateTime?          @map("identity_verified_at")
+  identityVerifiedBy String?            @map("identity_verified_by")
+  identityVerificationMethod String?    @map("identity_verification_method")
   stagePosition      Float              @default(0) @map("stage_position")
   aiEnabled          Boolean            @default(true) @map("ai_enabled")
   unreadCount        Int                @default(0) @map("unread_count")
@@ -251,14 +621,170 @@ model Conversation {
   channel        Channel           @relation(fields: [channelId], references: [id], onDelete: Cascade)
   assignee       User?             @relation("ConversationAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
   stage          PipelineStage?    @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  department     Department?       @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  resolutionReason ResolutionReason? @relation(fields: [resolutionReasonId], references: [id], onDelete: SetNull)
   messages       Message[]
   tags           ConversationTag[]
   automationRuns AutomationRun[]
+  learningCandidates LearningCandidate[]
+  knowledgeGaps      KnowledgeGap[]
+  operationalActionRequests OperationalActionRequest[]
+  operationalState    ConversationOperationalState?
+  followUpSequence    FollowUpSequence?
+  salesOpportunities  SalesOpportunity[]
 
   @@index([orgId, status])
+  @@index([orgId, departmentId, status])
   @@index([orgId, stageId, stagePosition])
   @@index([orgId, lastMessageAt])
   @@map("conversations")
+}
+
+/// O funil comercial não reutiliza PipelineStage, que pertence exclusivamente
+/// ao kanban de atendimento. Uma organização pode ter mais de um funil, mas o
+/// piloto começa com um funil de Vendas ligado ao departamento correspondente.
+model SalesPipeline {
+  id           String   @id @default(cuid())
+  orgId        String   @map("org_id")
+  departmentId String?  @map("department_id")
+  name         String
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  org           Organization       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  department    Department?        @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  stages        SalesStage[]
+  opportunities SalesOpportunity[]
+
+  @@unique([orgId, name])
+  @@index([orgId, isActive])
+  @@index([orgId, departmentId])
+  @@map("sales_pipelines")
+}
+
+model SalesStage {
+  id         String             @id @default(cuid())
+  orgId      String             @map("org_id")
+  pipelineId String             @map("pipeline_id")
+  name       String
+  category   SalesStageCategory
+  color      String             @default("#6366f1")
+  position   Int
+  isActive   Boolean            @default(true) @map("is_active")
+  createdAt  DateTime           @default(now()) @map("created_at")
+  updatedAt  DateTime           @updatedAt @map("updated_at")
+
+  org           Organization       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  pipeline      SalesPipeline      @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  opportunities SalesOpportunity[]
+
+  @@unique([pipelineId, position])
+  @@index([orgId, pipelineId, isActive, position])
+  @@map("sales_stages")
+}
+
+/// Ramificação comercial da conversa. O responsável é deliberadamente
+/// opcional no piloto: primeiro classificamos por setor; a distribuição
+/// individual é adicionada quando a operação definir os responsáveis.
+model SalesOpportunity {
+  id                  String                 @id @default(cuid())
+  orgId               String                 @map("org_id")
+  contactId           String                 @map("contact_id")
+  conversationId      String                 @map("conversation_id")
+  departmentId        String?                @map("department_id")
+  pipelineId          String                 @map("pipeline_id")
+  stageId             String                 @map("stage_id")
+  assigneeId          String?                @map("assignee_id")
+  createdById         String?                @map("created_by_id")
+  title               String
+  summary             String?
+  status              SalesOpportunityStatus @default(OPEN)
+  estimatedValueCents Int?                   @map("estimated_value_cents")
+  nextAction          String?                @map("next_action")
+  nextActionAt        DateTime?              @map("next_action_at")
+  holdReason          String?                @map("hold_reason")
+  closedReason        String?                @map("closed_reason")
+  closedAt            DateTime?              @map("closed_at")
+  createdAt           DateTime               @default(now()) @map("created_at")
+  updatedAt           DateTime               @updatedAt @map("updated_at")
+
+  org          Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  contact      Contact       @relation(fields: [contactId], references: [id], onDelete: Restrict)
+  conversation Conversation  @relation(fields: [conversationId], references: [id], onDelete: Restrict)
+  department   Department?   @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  pipeline     SalesPipeline @relation(fields: [pipelineId], references: [id], onDelete: Restrict)
+  stage        SalesStage    @relation(fields: [stageId], references: [id], onDelete: Restrict)
+  assignee     User?         @relation("SalesOpportunityAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  createdBy    User?         @relation("SalesOpportunityCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  tasks        SalesTask[]
+  activities   SalesActivity[]
+
+  @@index([orgId, status, nextActionAt])
+  @@index([orgId, pipelineId, stageId])
+  @@index([orgId, contactId, createdAt])
+  @@index([orgId, conversationId])
+  @@map("sales_opportunities")
+}
+
+model SalesTask {
+  id            String          @id @default(cuid())
+  orgId         String          @map("org_id")
+  opportunityId String          @map("opportunity_id")
+  assigneeId    String?         @map("assignee_id")
+  title         String
+  dueAt         DateTime?       @map("due_at")
+  status        SalesTaskStatus @default(OPEN)
+  completedAt   DateTime?       @map("completed_at")
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+
+  org         Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  opportunity SalesOpportunity  @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  assignee    User?             @relation("SalesTaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, status, dueAt])
+  @@index([orgId, opportunityId])
+  @@map("sales_tasks")
+}
+
+/// Linha do tempo comercial. Não armazena texto integral de cliente nem
+/// credenciais; o conteúdo completo segue exclusivamente na Conversation.
+model SalesActivity {
+  id            String   @id @default(cuid())
+  orgId         String   @map("org_id")
+  opportunityId String   @map("opportunity_id")
+  authorId      String?  @map("author_id")
+  type          String
+  metadata      Json     @default("{}")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  org         Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  opportunity SalesOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  author      User?            @relation("SalesActivityAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, opportunityId, createdAt])
+  @@map("sales_activities")
+}
+
+/// Estado operacional estruturado do caso. Não armazena texto bruto, CPF,
+/// telefone, endereço ou evidência individual; isso continua nas fontes e
+/// mensagens protegidas. A estrutura permite que a decisão não dependa de o
+/// modelo reinterpretar todo o histórico a cada turno.
+model ConversationOperationalState {
+  id             String   @id @default(cuid())
+  orgId          String   @map("org_id")
+  conversationId String   @unique @map("conversation_id")
+  version        Int      @default(1)
+  state          Json     @default("{}")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, updatedAt])
+  @@map("conversation_operational_states")
 }
 
 model Message {
@@ -350,6 +876,32 @@ model AutomationRun {
   @@map("automation_runs")
 }
 
+/// Cadência consentida. Em modo REVIEW nenhuma etapa envia mensagem: o
+/// responsável aprova a abordagem dentro da mesma conversa antes do contato.
+model FollowUpSequence {
+  id             String         @id @default(cuid())
+  orgId          String         @map("org_id")
+  conversationId String         @unique @map("conversation_id")
+  status         FollowUpStatus @default(SCHEDULED)
+  mode           String         @default("REVIEW")
+  currentStep    Int            @default(1) @map("current_step")
+  consentAt      DateTime       @map("consent_at")
+  nextRunAt      DateTime?      @map("next_run_at")
+  pausedReason   String?        @map("paused_reason")
+  lastSentAt     DateTime?      @map("last_sent_at")
+  responsibleUserId String?     @map("responsible_user_id")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  responsibleUser User? @relation("FollowUpSequenceResponsible", fields: [responsibleUserId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, status, nextRunAt])
+  @@index([orgId, responsibleUserId, status, nextRunAt])
+  @@map("follow_up_sequences")
+}
+
 model KnowledgeSource {
   id         String       @id @default(cuid())
   orgId      String       @map("org_id")
@@ -366,6 +918,78 @@ model KnowledgeSource {
 
   @@index([orgId])
   @@map("knowledge_sources")
+}
+
+model LearningCandidate {
+  id             String                  @id @default(cuid())
+  orgId          String                  @map("org_id")
+  conversationId String                  @map("conversation_id")
+  intent         String?
+  content        String
+  fingerprint    String
+  qualityScore   Float                   @map("quality_score")
+  autoPublishEligible Boolean            @default(false) @map("auto_publish_eligible")
+  autoPublishedAt DateTime?              @map("auto_published_at")
+  publishedSourceId String?              @map("published_source_id")
+  status         LearningCandidateStatus @default(PENDING)
+  reviewedById   String?                 @map("reviewed_by_id")
+  reviewedAt     DateTime?               @map("reviewed_at")
+  createdAt      DateTime                @default(now()) @map("created_at")
+  updatedAt      DateTime                @updatedAt @map("updated_at")
+
+  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, conversationId])
+  @@index([orgId, status, createdAt])
+  @@index([orgId, fingerprint, status])
+  @@map("learning_candidates")
+}
+
+/// Apenas equivalências de linguagem de baixo risco; nunca é fonte factual do RAG.
+model LanguageVariant {
+  id             String   @id @default(cuid())
+  orgId          String   @map("org_id")
+  normalizedText String   @map("normalized_text")
+  kind           String
+  status         String   @default("ACTIVE")
+  evidenceCount  Int      @map("evidence_count")
+  routeCount     Int      @map("route_count")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, normalizedText, kind])
+  @@index([orgId, kind, status])
+  @@map("language_variants")
+}
+
+model KnowledgeGap {
+  id             String             @id @default(cuid())
+  orgId          String             @map("org_id")
+  conversationId String             @map("conversation_id")
+  departmentId   String?            @map("department_id")
+  responderId    String?            @map("responder_id")
+  status         KnowledgeGapStatus @default(PENDING)
+  reason         String
+  question       String
+  context        Json               @default("{}")
+  answer         String?
+  dueAt          DateTime?          @map("due_at")
+  answeredAt     DateTime?          @map("answered_at")
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+
+  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  department   Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  responder    User?        @relation("KnowledgeGapResponder", fields: [responderId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, status, createdAt])
+  @@index([orgId, departmentId, status])
+  @@index([conversationId, status])
+  @@map("knowledge_gaps")
 }
 
 /// Colunas fixadas pelo CONTRACTS §11 (o serviço de IA lê/escreve via SQL direto):
@@ -418,6 +1042,92 @@ model AuditLog {
 
   @@index([orgId, entity, entityId])
   @@map("audit_logs")
+}
+
+/// Registro imutável dos indicadores agregados de prontidão. Ele existe para
+/// comparar a mesma régua ao longo do tempo; não altera modo, roteamento,
+/// integrações ou qualquer dado de cliente.
+model ReadinessSnapshot {
+  id          String   @id @default(cuid())
+  orgId       String   @map("org_id")
+  createdById String   @map("created_by_id")
+  label       String?
+  operational Json
+  integration Json
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdBy User         @relation("ReadinessSnapshotCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([orgId, createdAt])
+  @@map("readiness_snapshots")
+}
+
+model AiUsageEvent {
+  id                  String   @id @default(cuid())
+  orgId               String   @map("org_id")
+  provider            String
+  model               String
+  operation           String
+  inputTokens         Int      @default(0) @map("input_tokens")
+  outputTokens        Int      @default(0) @map("output_tokens")
+  cachedInputTokens   Int      @default(0) @map("cached_input_tokens")
+  cacheCreationTokens Int      @default(0) @map("cache_creation_tokens")
+  reasoningTokens     Int      @default(0) @map("reasoning_tokens")
+  estimatedUsd        Decimal  @db.Decimal(18, 8) @map("estimated_usd")
+  estimatedBrl        Decimal  @db.Decimal(18, 8) @map("estimated_brl")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt])
+  @@index([orgId, provider, model, createdAt])
+  @@map("ai_usage_events")
+}
+
+model AiBudgetAlert {
+  id             String    @id @default(cuid())
+  orgId          String    @map("org_id")
+  monthStart     DateTime  @db.Date @map("month_start")
+  threshold      Int
+  estimatedBrl   Decimal   @db.Decimal(18, 8) @map("estimated_brl")
+  budgetBrl      Decimal   @db.Decimal(18, 2) @map("budget_brl")
+  recipientEmail String    @map("recipient_email")
+  acknowledgedAt DateTime? @map("acknowledged_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, monthStart, threshold])
+  @@index([orgId, acknowledgedAt, createdAt])
+  @@map("ai_budget_alerts")
+}
+
+/// Registro consolidado de indisponibilidades e falhas operacionais. O
+/// fingerprint é determinístico por fonte/código, permitindo agrupar retries
+/// sem expor dados pessoais nem multiplicar alertas externos.
+model OperationalIncident {
+  id                 String                      @id @default(cuid())
+  orgId              String                      @map("org_id")
+  fingerprint        String
+  source             String
+  code               String
+  severity           OperationalIncidentSeverity
+  status             OperationalIncidentStatus   @default(OPEN)
+  occurrenceCount    Int                         @default(1) @map("occurrence_count")
+  firstSeenAt        DateTime                    @default(now()) @map("first_seen_at")
+  lastSeenAt         DateTime                    @default(now()) @map("last_seen_at")
+  lastNotificationAt DateTime?                   @map("last_notification_at")
+  acknowledgedAt     DateTime?                   @map("acknowledged_at")
+  resolvedAt         DateTime?                   @map("resolved_at")
+  createdAt          DateTime                    @default(now()) @map("created_at")
+  updatedAt          DateTime                    @updatedAt @map("updated_at")
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, fingerprint])
+  @@index([orgId, status, severity, lastSeenAt])
+  @@map("operational_incidents")
 }
 
 model WebhookEventLog {

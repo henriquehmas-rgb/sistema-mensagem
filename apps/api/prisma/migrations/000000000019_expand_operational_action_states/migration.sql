@@ -1,0 +1,7 @@
+ALTER TYPE "OperationalActionRequestStatus" ADD VALUE IF NOT EXISTS 'READY_TO_TRIGGER';
+ALTER TYPE "OperationalActionRequestStatus" ADD VALUE IF NOT EXISTS 'PROCESSING';
+ALTER TYPE "OperationalActionRequestStatus" ADD VALUE IF NOT EXISTS 'COMPLETED';
+ALTER TYPE "OperationalActionRequestStatus" ADD VALUE IF NOT EXISTS 'FAILED';
+ALTER TYPE "OperationalActionRequestStatus" ADD VALUE IF NOT EXISTS 'UNCERTAIN';
+ALTER TYPE "OperationalActionRequestStatus" ADD VALUE IF NOT EXISTS 'DUPLICATE_FOUND';
+ALTER TYPE "OperationalActionRequestStatus" ADD VALUE IF NOT EXISTS 'BLOCKED';

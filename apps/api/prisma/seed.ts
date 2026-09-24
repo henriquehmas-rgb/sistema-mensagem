@@ -18,6 +18,7 @@ import {
   type Tag,
   type User,
 } from '@prisma/client';
+import { createConversationProtocol } from '../src/common/protocol';
 import * as argon2 from 'argon2';
 
 const prisma = new PrismaClient();
@@ -344,6 +345,31 @@ async function main(): Promise<void> {
     stagesByName.set(def.name, stage);
   }
 
+  const department = await prisma.department.create({
+    data: {
+      orgId: org.id,
+      name: 'Atendimento Geral',
+      description: 'Triagem e atendimento inicial',
+      color: '#6366f1',
+      routingKey: 'general',
+      isDefault: true,
+    },
+  });
+  await Promise.all(
+    [
+      ['technical_support', 'Suporte', '#0ea5e9'],
+      ['billing', 'Financeiro', '#f59e0b'],
+      ['sales', 'Vendas', '#22c55e'],
+    ].map(([routingKey, name, color]) =>
+      prisma.department.create({ data: { orgId: org.id, routingKey, name, color } }),
+    ),
+  );
+  const resolutionReasons = await Promise.all(
+    ['Resolvido no atendimento', 'Orientação fornecida', 'Encaminhado para equipe responsável'].map(
+      (name) => prisma.resolutionReason.create({ data: { orgId: org.id, name } }),
+    ),
+  );
+
   const tagDefs = [
     { name: 'VIP', color: '#d4af37' },
     { name: 'Suporte', color: '#3b82f6' },
@@ -412,11 +438,16 @@ async function main(): Promise<void> {
     const startedAt = new Date(Date.now() - seed.hoursAgo * HOUR);
     const conversation = await prisma.conversation.create({
       data: {
+        protocol: createConversationProtocol(startedAt),
         orgId: org.id,
         contactId: contact.id,
         channelId: channel.id,
         status: seed.status,
         stageId: stage.id,
+        departmentId: department.id,
+        resolutionReasonId:
+          seed.status === ConversationStatus.RESOLVED ? resolutionReasons[0]?.id : undefined,
+        resolvedAt: seed.status === ConversationStatus.RESOLVED ? startedAt : undefined,
         stagePosition,
         aiEnabled: seed.aiEnabled ?? true,
         assigneeId: seed.assignee ? usersByKey[seed.assignee]?.id : undefined,
