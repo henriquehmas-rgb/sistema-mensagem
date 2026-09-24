@@ -43,7 +43,7 @@ function messageFixture(overrides: Partial<Record<string, unknown>>) {
     type: MessageType.TEXT,
     content: { text: 'oi' },
     status: 'SENT',
-    authorId: null,
+    authorId: null as string | null,
     isAiGenerated: false,
     errorMessage: null,
     createdAt: new Date('2026-01-01T00:01:00.000Z'),
@@ -87,6 +87,11 @@ function createHarness() {
     message: {
       findMany: vi.fn().mockImplementation(() => Promise.resolve(messages)),
     },
+    conversation: {
+      findFirst: vi.fn().mockResolvedValue({ lastIntent: 'technical_support', department: { routingKey: 'technical_support' } }),
+    },
+    learningCandidate: { upsert: vi.fn().mockResolvedValue({ id: 'candidate_1', publishedSourceId: null }), update: vi.fn() },
+    knowledgeSource: { create: vi.fn().mockResolvedValue({ id: 'source_1' }) },
   };
   const prisma = { prismaSystem };
   const realtime = { emitContactUpdated: vi.fn() };
@@ -94,15 +99,17 @@ function createHarness() {
     summarizeMemory: vi
       .fn()
       .mockResolvedValue({ summary: 'Ana prefere atendimento por WhatsApp.' }),
+    prepareLearningCandidate: vi.fn().mockResolvedValue({ eligible: false }),
   };
-
+  const knowledgeIngestQueue = { add: vi.fn() };
   const processor = new MemorySummarizeProcessor(
     prisma as never,
     realtime as never,
     aiClient as never,
+    knowledgeIngestQueue as never,
   );
 
-  return { processor, prismaSystem, realtime, aiClient, contact, messages };
+  return { processor, prismaSystem, realtime, aiClient, knowledgeIngestQueue, contact, messages };
 }
 
 function jobFor(overrides: Partial<MemorySummarizeJob> = {}): Job<MemorySummarizeJob> {
@@ -205,5 +212,65 @@ describe('MemorySummarizeProcessor', () => {
 
     expect(harness.prismaSystem.contact.update).not.toHaveBeenCalled();
     expect(harness.realtime.emitContactUpdated).not.toHaveBeenCalled();
+  });
+
+  it('captura a última solução humana sanitizada como candidata pendente', async () => {
+    harness.messages[1]!.authorId = 'user_1';
+    harness.aiClient.prepareLearningCandidate.mockResolvedValue({
+      eligible: true,
+      content: 'Pergunta recorrente: Meu nome é Ana\nResposta validada por atendente: Olá Ana, como posso ajudar?',
+      quality_score: 0.8,
+      fingerprint: 'fingerprint_1',
+      auto_publish_eligible: false,
+    });
+
+    await harness.processor.process(jobFor());
+
+    expect(harness.aiClient.prepareLearningCandidate).toHaveBeenCalledExactlyOnceWith({
+      question: 'Meu nome é Ana',
+      answer: 'Olá Ana, como posso ajudar?',
+      department_key: 'technical_support',
+    });
+    expect(harness.prismaSystem.learningCandidate.upsert).toHaveBeenCalledWith({
+      where: { orgId_conversationId: { orgId: ORG_ID, conversationId: CONVERSATION_ID } },
+      create: {
+        orgId: ORG_ID,
+        conversationId: CONVERSATION_ID,
+        intent: 'technical_support',
+        content: expect.stringContaining('Resposta validada por atendente'),
+        fingerprint: 'fingerprint_1',
+        qualityScore: 0.8,
+        autoPublishEligible: false,
+      },
+      update: {
+        intent: 'technical_support',
+        content: expect.stringContaining('Resposta validada por atendente'),
+        fingerprint: 'fingerprint_1',
+        qualityScore: 0.8,
+        autoPublishEligible: false,
+      },
+    });
+  });
+
+  it('publica provisoriamente uma solução técnica elegível para revisão semanal', async () => {
+    harness.messages[1]!.authorId = 'user_1';
+    harness.aiClient.prepareLearningCandidate.mockResolvedValue({
+      eligible: true,
+      content: 'Pergunta recorrente: Internet sem conexão\nResposta registrada por atendente: Reinicie o roteador por trinta segundos.',
+      quality_score: 0.95,
+      fingerprint: 'a'.repeat(64),
+      auto_publish_eligible: true,
+    });
+    await harness.processor.process(jobFor());
+
+    expect(harness.prismaSystem.learningCandidate.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ autoPublishEligible: true, qualityScore: 0.95 }),
+        update: expect.objectContaining({ autoPublishEligible: true, qualityScore: 0.95 }),
+      }),
+    );
+    expect(harness.prismaSystem.knowledgeSource.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ type: 'TEXT', meta: expect.objectContaining({ governance: 'AUTO_REVIEW_REQUIRED', weeklyReviewRequired: true }) }),
+    }));
   });
 });

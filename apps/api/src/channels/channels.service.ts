@@ -59,7 +59,11 @@ export class ChannelsService {
         name: dto.name,
         config: config as Prisma.InputJsonValue,
         encryptedCredentials: this.encryptCredentials(dto.credentials),
-        externalId: dto.externalId ?? null,
+        // O webhook de entrada resolve o canal pelo phone_number_id. Mantemos
+        // esse identificador público no canal além de guardá-lo cifrado nas
+        // credenciais, para que um canal criado pela UI nunca fique incapaz de
+        // receber mensagens.
+        externalId: this.resolveExternalId(dto.type, dto.externalId, dto.credentials),
       },
     });
     await this.audit.log({
@@ -85,7 +89,16 @@ export class ChannelsService {
         dto.config,
       )) as Prisma.InputJsonValue;
     }
-    if (dto.externalId !== undefined) data.externalId = dto.externalId;
+    if (dto.externalId !== undefined) {
+      data.externalId = dto.externalId;
+    } else if (dto.credentials !== undefined) {
+      const derivedExternalId = this.resolveExternalId(
+        existing.type,
+        undefined,
+        dto.credentials,
+      );
+      if (derivedExternalId !== null) data.externalId = derivedExternalId;
+    }
     if (dto.credentials !== undefined) {
       data.encryptedCredentials = this.encryptCredentials(dto.credentials);
     }
@@ -193,6 +206,25 @@ export class ChannelsService {
       throw new BadRequestException('credentials excede o tamanho máximo permitido (8KB)');
     }
     return this.crypto.encrypt(serialized);
+  }
+
+  /**
+   * No WhatsApp, o phone_number_id é simultaneamente credencial operacional e
+   * chave pública de roteamento do webhook. O valor explícito continua tendo
+   * precedência para compatibilidade com integrações que já o enviam.
+   */
+  private resolveExternalId(
+    type: ChannelType,
+    externalId: string | undefined,
+    credentials: Record<string, unknown> | undefined,
+  ): string | null {
+    if (externalId !== undefined) return externalId;
+    if (type !== ChannelType.WHATSAPP) return null;
+
+    const phoneNumberId = credentials?.phoneNumberId;
+    return typeof phoneNumberId === 'string' && phoneNumberId.trim().length > 0
+      ? phoneNumberId.trim()
+      : null;
   }
 
   private async findOrThrow(id: string): Promise<Channel> {

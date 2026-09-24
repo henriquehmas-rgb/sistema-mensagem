@@ -1,8 +1,9 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { ConversationStatus, Prisma } from '@prisma/client';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConversationStatus, MessageDirection, Prisma } from '@prisma/client';
 import type { Queue } from 'bullmq';
 import { AuditService } from '../audit/audit.service';
+import { extractCaseSummary } from '../common/case-summary';
 import type { AuthUser } from '../auth/interfaces/auth-user.interface';
 import {
   conversationInclude,
@@ -12,6 +13,7 @@ import {
   type PaginatedDto,
 } from '../common/serializers';
 import { PrismaService } from '../prisma/prisma.service';
+import { AiServiceClient } from '../queues/ai-service.client';
 import { QUEUES, type MemorySummarizeJob } from '../queues/queues.constants';
 import { RealtimeService } from '../realtime/realtime.service';
 import { TenancyService } from '../tenancy/tenancy.service';
@@ -24,20 +26,170 @@ const STAGE_POSITION_GAP = 1_024;
 
 @Injectable()
 export class ConversationsService {
+  private readonly logger = new Logger(ConversationsService.name);
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
     private readonly tenancy: TenancyService,
     private readonly audit: AuditService,
+    private readonly aiService: AiServiceClient,
     @InjectQueue(QUEUES.MEMORY_SUMMARIZE)
     private readonly memorySummarizeQueue: Queue<MemorySummarizeJob>,
   ) {}
 
+  async verifyIdentity(
+    id: string,
+    method: 'IN_PERSON_CONFIRMED',
+    actor: AuthUser,
+  ): Promise<ConversationDto> {
+    const conversation = await this.get(id, actor);
+    const updated = await this.prisma.tenant.conversation.update({
+      where: { id: conversation.id },
+      data: {
+        identityVerifiedAt: new Date(),
+        identityVerifiedBy: actor.userId,
+        identityVerificationMethod: method,
+      },
+      include: conversationInclude,
+    });
+    await this.audit.log({
+      action: 'conversation.identity.verify',
+      entity: 'Conversation',
+      entityId: id,
+      meta: { method },
+    });
+    this.realtime.emitConversationUpdated(updated.orgId, { conversation: toConversationDto(updated) });
+    return toConversationDto(updated);
+  }
+
+  async revokeIdentity(id: string, actor: AuthUser): Promise<ConversationDto> {
+    const conversation = await this.get(id, actor);
+    const updated = await this.prisma.tenant.conversation.update({
+      where: { id: conversation.id },
+      data: {
+        identityVerifiedAt: null,
+        identityVerifiedBy: null,
+        identityVerificationMethod: null,
+      },
+      include: conversationInclude,
+    });
+    await this.audit.log({
+      action: 'conversation.identity.revoke',
+      entity: 'Conversation',
+      entityId: id,
+      meta: { by: actor.userId },
+    });
+    this.realtime.emitConversationUpdated(updated.orgId, { conversation: toConversationDto(updated) });
+    return toConversationDto(updated);
+  }
+
+  /**
+   * Enriquece conversas legadas sem produzir resposta, mensagem ou automação.
+   * Preserva triagens existentes e limita cada execução para manter a operação previsível.
+   */
+  async backfillTriage(): Promise<{ processed: number; updated: number; skipped: number; failed: number; remaining: number }> {
+    const conversations = await this.prisma.tenant.conversation.findMany({
+      where: { OR: [{ caseSummary: null }, { lastIntent: null }] },
+      select: {
+        id: true,
+        caseSummary: true,
+        lastIntent: true,
+        triageConfidence: true,
+        triagedAt: true,
+        departmentId: true,
+        messages: {
+          where: { direction: { in: [MessageDirection.INBOUND, MessageDirection.OUTBOUND] } },
+          orderBy: { createdAt: 'desc' },
+          take: 12,
+          select: { direction: true, content: true },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 50,
+    });
+
+    let updated = 0;
+    let skipped = 0;
+    let failed = 0;
+    for (const conversation of conversations) {
+      const messages = conversation.messages.reverse().flatMap((message) => {
+        const content = message.content as Record<string, unknown>;
+        const text = typeof content.text === 'string' ? content.text.trim() : '';
+        return text ? [{
+          role: message.direction === MessageDirection.INBOUND ? 'user' as const : 'assistant' as const,
+          content: text,
+        }] : [];
+      });
+      if (!messages.some((message) => message.role === 'user')) {
+        skipped += 1;
+        continue;
+      }
+
+      const fallbackSummary = extractCaseSummary(messages);
+      try {
+      const analysis = await this.aiService.analyzeTriage(messages);
+      const routeDepartment = conversation.departmentId || analysis.route_key === 'unrouted' ? null : await this.prisma.tenant.department.findFirst({
+        where: { isActive: true, routingKey: analysis.route_key },
+        select: { id: true },
+      });
+      const fallbackDepartment = conversation.departmentId || routeDepartment || analysis.route_key === 'unrouted' ? null : await this.prisma.tenant.department.findFirst({
+        where: { isActive: true, isDefault: true },
+        select: { id: true },
+      });
+      await this.prisma.tenant.conversation.update({
+        where: { id: conversation.id },
+        data: {
+          ...(conversation.lastIntent ? {} : {
+            lastIntent: analysis.intent,
+            secondaryIntent: analysis.secondary_intent ?? null,
+            alternativeRouteKey: analysis.alternative_route_key ?? null,
+            triageConflict: analysis.conflict_detected === true,
+            routingEvidence: analysis.routing_evidence ?? [],
+            triageConfidence: Math.max(0, Math.min(1, analysis.triage_confidence)),
+            triagedAt: new Date(),
+          }),
+          ...(conversation.caseSummary ? {} : { caseSummary: analysis.case_summary ?? fallbackSummary }),
+          ...(conversation.departmentId ? {} : { departmentId: routeDepartment?.id ?? fallbackDepartment?.id }),
+        },
+      });
+      updated += 1;
+      } catch (error) {
+        failed += 1;
+        this.logger.warn(`Backfill de triagem falhou para conversa ${conversation.id}: ${error instanceof Error ? error.message : 'erro desconhecido'}`);
+        if (!conversation.caseSummary && fallbackSummary) {
+          await this.prisma.tenant.conversation.update({
+            where: { id: conversation.id },
+            data: { caseSummary: fallbackSummary },
+          });
+          updated += 1;
+        }
+      }
+    }
+
+    const remaining = await this.prisma.tenant.conversation.count({
+      where: { OR: [{ caseSummary: null }, { lastIntent: null }] },
+    });
+    return { processed: conversations.length, updated, skipped, failed, remaining };
+  }
+
   /** GET /conversations — todos os filtros do CONTRACTS §6, ordenado por lastMessageAt desc. */
-  async list(query: ListConversationsQuery): Promise<PaginatedDto<ConversationDto>> {
+  async list(query: ListConversationsQuery, actor: AuthUser): Promise<PaginatedDto<ConversationDto>> {
     const where: Prisma.ConversationWhereInput = {};
 
-    if (query.status) {
+    if (actor.role === 'AGENT') {
+      const departmentId = await this.agentDepartmentOrThrow(actor.userId);
+      where.departmentId = departmentId;
+    }
+
+    if (query.attention) {
+      where.status = { not: ConversationStatus.RESOLVED };
+      where.assigneeId = null;
+      where.OR = [
+        { aiEnabled: false },
+      ];
+    }
+
+    if (query.status && !query.attention) {
       where.status = query.status;
     }
     if (query.assigneeId !== undefined) {
@@ -78,8 +230,38 @@ export class ConversationsService {
     };
   }
 
-  async get(id: string): Promise<ConversationDto> {
-    return toConversationDto(await this.findOrThrow(id));
+  async get(id: string, actor: AuthUser): Promise<ConversationDto> {
+    const conversation = await this.findOrThrow(id);
+    await this.assertDepartmentAccess(conversation.departmentId, actor);
+    return toConversationDto(conversation);
+  }
+
+  /** Assunção atômica: somente o primeiro atendente vence a disputa. */
+  async claim(id: string, actor: AuthUser): Promise<ConversationDto> {
+    const existing = await this.findOrThrow(id);
+    await this.assertDepartmentAccess(existing.departmentId, actor);
+    if (existing.assigneeId === actor.userId) {
+      return toConversationDto(existing);
+    }
+    if (existing.status === ConversationStatus.RESOLVED) {
+      throw new BadRequestException('Reabra a conversa antes de assumir o atendimento');
+    }
+
+    const claimed = await this.prisma.tenant.conversation.updateMany({
+      where: { id, assigneeId: null, status: { not: ConversationStatus.RESOLVED } },
+      data: { assigneeId: actor.userId, aiEnabled: false },
+    });
+    if (claimed.count !== 1) {
+      throw new ConflictException('Este atendimento já foi assumido por outra pessoa');
+    }
+
+    await this.audit.log({
+      action: 'conversation.claim',
+      entity: 'Conversation',
+      entityId: id,
+      meta: { by: actor.userId },
+    });
+    return this.emitUpdated(id);
   }
 
   /**
@@ -91,10 +273,14 @@ export class ConversationsService {
    */
   async update(id: string, dto: UpdateConversationDto, actor: AuthUser): Promise<ConversationDto> {
     const before = await this.findOrThrow(id);
+    await this.assertDepartmentAccess(before.departmentId, actor);
 
     const data: Prisma.ConversationUncheckedUpdateInput = {};
 
     if (dto.assigneeId !== undefined) {
+      if (actor.role === 'AGENT' && dto.assigneeId !== actor.userId) {
+        throw new ForbiddenException('Atendentes só podem assumir conversas para si');
+      }
       if (dto.assigneeId !== null) {
         const assignee = await this.prisma.tenant.user.findFirst({
           where: { id: dto.assigneeId, isActive: true },
@@ -108,6 +294,11 @@ export class ConversationsService {
     }
     if (dto.status !== undefined) {
       data.status = dto.status;
+      if (dto.status === ConversationStatus.RESOLVED) {
+        data.identityVerifiedAt = null;
+        data.identityVerifiedBy = null;
+        data.identityVerificationMethod = null;
+      }
     }
     if (dto.stageId !== undefined) {
       if (dto.stageId !== null) {
@@ -124,6 +315,54 @@ export class ConversationsService {
     if (dto.aiEnabled !== undefined) {
       data.aiEnabled = dto.aiEnabled;
     }
+    if (dto.departmentId !== undefined) {
+      if (dto.departmentId !== null) {
+        const department = await this.prisma.tenant.department.findFirst({
+          where: { id: dto.departmentId, isActive: true },
+          select: { id: true },
+        });
+        if (!department) {
+          throw new BadRequestException(
+            'departmentId não corresponde a um departamento ativo da organização',
+          );
+        }
+      }
+      data.departmentId = dto.departmentId;
+    }
+    if (dto.resolutionReasonId !== undefined) {
+      if (dto.resolutionReasonId !== null) {
+        const reason = await this.prisma.tenant.resolutionReason.findFirst({
+          where: { id: dto.resolutionReasonId, isActive: true },
+          select: { id: true },
+        });
+        if (!reason) {
+          throw new BadRequestException(
+            'resolutionReasonId não corresponde a um motivo ativo da organização',
+          );
+        }
+      }
+      data.resolutionReasonId = dto.resolutionReasonId;
+    }
+    if (dto.resolutionNote !== undefined) {
+      data.resolutionNote = dto.resolutionNote?.trim() || null;
+    }
+
+    const enteringResolved =
+      dto.status === ConversationStatus.RESOLVED && before.status !== ConversationStatus.RESOLVED;
+    const reopening =
+      dto.status !== undefined &&
+      dto.status !== ConversationStatus.RESOLVED &&
+      before.status === ConversationStatus.RESOLVED;
+    if (enteringResolved) {
+      if (!dto.resolutionReasonId) {
+        throw new BadRequestException('Selecione um motivo para encerrar o atendimento');
+      }
+      data.resolvedAt = new Date();
+    } else if (reopening) {
+      data.resolvedAt = null;
+      data.resolutionReasonId = null;
+      data.resolutionNote = null;
+    }
 
     await this.prisma.tenant.conversation.update({ where: { id }, data });
     await this.audit.log({
@@ -133,8 +372,6 @@ export class ConversationsService {
       meta: { fields: Object.keys(data), by: actor.userId },
     });
 
-    const enteringResolved =
-      dto.status === ConversationStatus.RESOLVED && before.status !== ConversationStatus.RESOLVED;
     if (enteringResolved) {
       await this.memorySummarizeQueue.add('summarize', {
         orgId: this.tenancy.getOrgIdOrThrow(),
@@ -316,6 +553,25 @@ export class ConversationsService {
     const dto = toConversationDto(conversation);
     this.realtime.emitConversationUpdated(this.tenancy.getOrgIdOrThrow(), { conversation: dto });
     return dto;
+  }
+
+  private async agentDepartmentOrThrow(userId: string): Promise<string> {
+    const user = await this.prisma.tenant.user.findFirst({
+      where: { id: userId, isActive: true },
+      select: { departmentId: true },
+    });
+    if (!user?.departmentId) {
+      throw new ForbiddenException('Atendente sem setor configurado. Procure um administrador.');
+    }
+    return user.departmentId;
+  }
+
+  private async assertDepartmentAccess(departmentId: string | null, actor: AuthUser): Promise<void> {
+    if (actor.role !== 'AGENT') return;
+    const agentDepartmentId = await this.agentDepartmentOrThrow(actor.userId);
+    if (!departmentId || departmentId !== agentDepartmentId) {
+      throw new ForbiddenException('Este atendimento pertence a outro setor');
+    }
   }
 
   private async findOrThrow(id: string): Promise<ConversationWithRelations> {

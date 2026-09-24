@@ -1,6 +1,7 @@
 import { InjectQueue } from '@nestjs/bullmq';
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -48,8 +49,8 @@ export class MessagesService {
    * GET /conversations/:id/messages — cursor = id da msg mais antiga carregada,
    * ordem desc (mais recentes primeiro). Retorna {data, nextCursor}.
    */
-  async list(conversationId: string, query: ListMessagesQuery): Promise<MessagePageDto> {
-    await this.assertConversation(conversationId);
+  async list(conversationId: string, query: ListMessagesQuery, actor: AuthUser): Promise<MessagePageDto> {
+    await this.assertConversation(conversationId, actor);
 
     const messages = await this.prisma.tenant.message.findMany({
       where: { conversationId },
@@ -73,7 +74,7 @@ export class MessagesService {
    * enfileira `message-outbound` (CONTRACTS §4/§6).
    */
   async send(conversationId: string, dto: CreateMessageDto, actor: AuthUser): Promise<MessageDto> {
-    const conversation = await this.assertConversation(conversationId);
+    const conversation = await this.assertConversation(conversationId, actor, true);
     await this.validateContent(dto.type, dto.content, conversation.channelId);
 
     const preview = messagePreview(dto.type, dto.content);
@@ -224,13 +225,27 @@ export class MessagesService {
 
   private async assertConversation(
     conversationId: string,
-  ): Promise<{ id: string; channelId: string }> {
+    actor: AuthUser,
+    requireClaim = false,
+  ): Promise<{ id: string; channelId: string; departmentId: string | null; assigneeId: string | null }> {
     const conversation = await this.prisma.tenant.conversation.findUnique({
       where: { id: conversationId },
-      select: { id: true, channelId: true },
+      select: { id: true, channelId: true, departmentId: true, assigneeId: true },
     });
     if (!conversation) {
       throw new NotFoundException('Conversa não encontrada');
+    }
+    if (actor.role === 'AGENT') {
+      const user = await this.prisma.tenant.user.findFirst({
+        where: { id: actor.userId, isActive: true },
+        select: { departmentId: true },
+      });
+      if (!user?.departmentId || conversation.departmentId !== user.departmentId) {
+        throw new ForbiddenException('Este atendimento pertence a outro setor');
+      }
+      if (requireClaim && conversation.assigneeId !== actor.userId) {
+        throw new ForbiddenException('Assuma o atendimento antes de responder');
+      }
     }
     return conversation;
   }

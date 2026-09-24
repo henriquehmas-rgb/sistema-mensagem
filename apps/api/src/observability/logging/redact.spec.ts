@@ -6,6 +6,13 @@ import { redactSensitive } from './redact';
  * authorization SEMPRE mascarados em qualquer log de objeto.
  */
 describe('redactSensitive', () => {
+  it('remove fatores de validação de identidade', () => {
+    expect(redactSensitive({ cpf: '12345678901', cpfLast3: '123', birthMonth: '09' })).toEqual({
+      cpf: '[REDACTED]',
+      cpfLast3: '[REDACTED]',
+      birthMonth: '[REDACTED]',
+    });
+  });
   it('mascara accessToken/password/authorization no primeiro nível', () => {
     const input = {
       accessToken: 'abc123',

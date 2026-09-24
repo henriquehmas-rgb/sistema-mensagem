@@ -14,17 +14,22 @@ import type { UpdateConversationDto } from './dto/update-conversation.dto';
 const ORG_ID = 'org_seeg';
 const CONVERSATION_ID = 'conv_1';
 const CONTACT_ID = 'contact_1';
-const ACTOR = { userId: 'user_1', orgId: ORG_ID, role: 'AGENT' as Role };
+const ACTOR = { userId: 'user_1', orgId: ORG_ID, role: 'ADMIN' as Role };
 
 function conversationFixture(status: ConversationStatus) {
   return {
     id: CONVERSATION_ID,
+    protocol: 'SEEG-TEST-0001',
     orgId: ORG_ID,
     contactId: CONTACT_ID,
     channelId: 'ch_1',
     status,
     assigneeId: null,
     stageId: null,
+    departmentId: null,
+    resolutionReasonId: status === ConversationStatus.RESOLVED ? 'reason_1' : null,
+    resolutionNote: null,
+    resolvedAt: status === ConversationStatus.RESOLVED ? new Date('2026-01-01T00:00:00.000Z') : null,
     stagePosition: 0,
     aiEnabled: true,
     unreadCount: 0,
@@ -48,6 +53,9 @@ function conversationFixture(status: ConversationStatus) {
     },
     assignee: null,
     channel: { id: 'ch_1', type: ChannelType.WHATSAPP },
+    department: null,
+    resolutionReason:
+      status === ConversationStatus.RESOLVED ? { id: 'reason_1', name: 'Resolvido' } : null,
     tags: [],
   };
 }
@@ -63,13 +71,16 @@ function createHarness(initialStatus: ConversationStatus) {
         return Promise.resolve(current);
       }),
     },
-    user: { findFirst: vi.fn() },
+    user: { findFirst: vi.fn().mockResolvedValue({ departmentId: 'department_1' }) },
     pipelineStage: { findFirst: vi.fn() },
+    department: { findFirst: vi.fn() },
+    resolutionReason: { findFirst: vi.fn().mockResolvedValue({ id: 'reason_1' }) },
   };
   const prisma = { tenant };
   const realtime = { emitConversationUpdated: vi.fn(), emitConversationMoved: vi.fn() };
   const tenancy = { getOrgIdOrThrow: vi.fn().mockReturnValue(ORG_ID) };
   const audit = { log: vi.fn().mockResolvedValue(undefined) };
+  const aiService = {};
   const memorySummarizeQueue = { add: vi.fn().mockResolvedValue(undefined) };
 
   const service = new ConversationsService(
@@ -77,6 +88,7 @@ function createHarness(initialStatus: ConversationStatus) {
     realtime as never,
     tenancy as never,
     audit as never,
+    aiService as never,
     memorySummarizeQueue as never,
   );
 
@@ -88,7 +100,10 @@ describe('ConversationsService.update — gatilho memory-summarize (CONTRACTS §
 
   it('OPEN → RESOLVED enfileira memory-summarize uma vez com {orgId, contactId, conversationId}', async () => {
     harness = createHarness(ConversationStatus.OPEN);
-    const dto: UpdateConversationDto = { status: ConversationStatus.RESOLVED };
+    const dto: UpdateConversationDto = {
+      status: ConversationStatus.RESOLVED,
+      resolutionReasonId: 'reason_1',
+    };
 
     await harness.service.update(CONVERSATION_ID, dto, ACTOR);
 
@@ -101,7 +116,10 @@ describe('ConversationsService.update — gatilho memory-summarize (CONTRACTS §
 
   it('PENDING → RESOLVED também enfileira (qualquer status anterior não-RESOLVED)', async () => {
     harness = createHarness(ConversationStatus.PENDING);
-    const dto: UpdateConversationDto = { status: ConversationStatus.RESOLVED };
+    const dto: UpdateConversationDto = {
+      status: ConversationStatus.RESOLVED,
+      resolutionReasonId: 'reason_1',
+    };
 
     await harness.service.update(CONVERSATION_ID, dto, ACTOR);
 
@@ -110,6 +128,21 @@ describe('ConversationsService.update — gatilho memory-summarize (CONTRACTS §
       contactId: CONTACT_ID,
       conversationId: CONVERSATION_ID,
     });
+  });
+
+  it('recusa encerrar sem motivo estruturado', async () => {
+    harness = createHarness(ConversationStatus.OPEN);
+
+    await expect(
+      harness.service.update(
+        CONVERSATION_ID,
+        { status: ConversationStatus.RESOLVED },
+        ACTOR,
+      ),
+    ).rejects.toThrow('Selecione um motivo para encerrar o atendimento');
+
+    expect(harness.tenant.conversation.update).not.toHaveBeenCalled();
+    expect(harness.memorySummarizeQueue.add).not.toHaveBeenCalled();
   });
 
   it('RESOLVED → RESOLVED (idempotência) não re-enfileira', async () => {

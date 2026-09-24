@@ -14,8 +14,9 @@ export class MessagesController {
   list(
     @Param('conversationId') conversationId: string,
     @Query() query: ListMessagesQuery,
+    @CurrentUser() actor: AuthUser,
   ): Promise<MessagePageDto> {
-    return this.messagesService.list(conversationId, query);
+    return this.messagesService.list(conversationId, query, actor);
   }
 
   @Post()

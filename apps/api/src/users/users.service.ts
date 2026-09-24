@@ -56,6 +56,7 @@ export class UsersService {
   }
 
   async create(dto: CreateUserDto): Promise<UserDto> {
+    await this.validateDepartment(dto.departmentId, dto.role ?? 'AGENT');
     const passwordHash = await argon2.hash(dto.password, { type: argon2.argon2id });
     try {
       const user = await this.prisma.tenant.user.create({
@@ -66,6 +67,7 @@ export class UsersService {
           email: dto.email.toLowerCase(),
           passwordHash,
           role: dto.role ?? 'AGENT',
+          departmentId: dto.departmentId ?? null,
           avatarUrl: dto.avatarUrl ?? null,
         },
       });
@@ -77,15 +79,25 @@ export class UsersService {
   }
 
   async update(id: string, dto: UpdateUserDto, actor: AuthUser): Promise<UserDto> {
-    await this.findOrThrow(id);
+    const existing = await this.findOrThrow(id);
     if (id === actor.userId && dto.isActive === false) {
       throw new ForbiddenException('Não é possível desativar o próprio usuário');
     }
 
     const data: Prisma.UserUpdateInput = {};
+    await this.validateDepartment(
+      dto.departmentId === undefined ? existing.departmentId ?? undefined : dto.departmentId ?? undefined,
+      dto.role ?? existing.role,
+    );
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.email !== undefined) data.email = dto.email.toLowerCase();
     if (dto.role !== undefined) data.role = dto.role;
+    if (dto.departmentId !== undefined) {
+      await this.validateDepartment(dto.departmentId ?? undefined, dto.role);
+      data.department = dto.departmentId
+        ? { connect: { id: dto.departmentId } }
+        : { disconnect: true };
+    }
     if (dto.avatarUrl !== undefined) data.avatarUrl = dto.avatarUrl;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
     if (dto.password !== undefined) {
@@ -134,6 +146,20 @@ export class UsersService {
       throw new NotFoundException('Usuário não encontrado');
     }
     return user;
+  }
+
+  private async validateDepartment(departmentId: string | undefined, role?: User['role']): Promise<void> {
+    if (!departmentId) {
+      if (role === 'AGENT') {
+        throw new ForbiddenException('Selecione um setor para o atendente');
+      }
+      return;
+    }
+    const department = await this.prisma.tenant.department.findFirst({
+      where: { id: departmentId, isActive: true },
+      select: { id: true },
+    });
+    if (!department) throw new NotFoundException('Setor não encontrado ou inativo');
   }
 
   private mapUniqueViolation(error: unknown, message: string): Error {

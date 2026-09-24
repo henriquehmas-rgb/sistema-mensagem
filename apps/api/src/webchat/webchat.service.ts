@@ -1,13 +1,14 @@
 import { InjectQueue } from '@nestjs/bullmq';
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { ChannelStatus, ChannelType, MessageType } from '@prisma/client';
+import { ChannelStatus, ChannelType, MessageType, type Contact } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { randomUUID } from 'node:crypto';
 import {
@@ -16,7 +17,7 @@ import {
   toMessageDto,
   type MessageDto,
 } from '../common/serializers';
-import { InboundMessageService } from '../inbound/inbound-message.service';
+import { AmbiguousContactPhoneError, InboundMessageService } from '../inbound/inbound-message.service';
 import { MediaService, type StoredUpload, type UploadFileInput } from '../media/media.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { QUEUES, type AutomationRunJob } from '../queues/queues.constants';
@@ -61,7 +62,7 @@ export class WebchatService {
     private readonly automationRunQueue: Queue<AutomationRunJob>,
   ) {}
 
-  /** POST /api/webchat/session {orgSlug} → {visitorToken, conversationId}. */
+  /** POST /api/webchat/session identifica o contato e cria a conversa vinculada. */
   async createSession(dto: CreateWebchatSessionDto): Promise<WebchatSessionDto> {
     const org = await this.prisma.prismaSystem.organization.findUnique({
       where: { slug: dto.orgSlug },
@@ -80,12 +81,24 @@ export class WebchatService {
     }
 
     const visitorId = randomUUID();
-    const contact = await this.inbound.ensureContact({
-      orgId: org.id,
-      channelType: ChannelType.WEBCHAT,
-      externalContactId: visitorId,
-      contactName: dto.name,
-    });
+    let contact: Contact;
+    try {
+      contact = await this.inbound.ensureContact({
+        orgId: org.id,
+        channelType: ChannelType.WEBCHAT,
+        externalContactId: visitorId,
+        contactName: dto.name,
+        contactPhone: dto.phone,
+        rejectAmbiguousPhoneMatch: true,
+      });
+    } catch (error) {
+      if (error instanceof AmbiguousContactPhoneError) {
+        throw new ConflictException(
+          'Encontramos mais de um cadastro com este telefone. Para preservar seu histórico, peça à equipe para unificar o cadastro antes de iniciar uma nova conversa.',
+        );
+      }
+      throw error;
+    }
     const { conversation, created } = await this.inbound.ensureConversation(
       org.id,
       channel.id,

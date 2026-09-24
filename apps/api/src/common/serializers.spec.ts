@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import type { Contact } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
-import { toContactDto } from './serializers';
+import { sanitizeMessageForVisitor, toContactDto } from './serializers';
 
 const ORG_ID = 'org_seeg';
 
@@ -47,5 +47,24 @@ describe('toContactDto — memória de longo prazo (CONTRACTS §15)', () => {
 
     expect(dto.memorySummary).toBe('Prefere contato por telefone. Já comprou o plano Pro em 2025.');
     expect(dto.memoryUpdatedAt).toBe('2026-02-10T12:30:00.000Z');
+  });
+});
+
+describe('sanitizeMessageForVisitor — identidade', () => {
+  it('mantém a cronologia com bolha mascarada, sem expor fatores', () => {
+    const message = {
+      id: 'message_1', conversationId: 'conversation_1', direction: 'INBOUND', type: 'TEXT',
+      content: { text: '[Validação temporariamente indisponível]' }, status: 'DELIVERED',
+      authorId: null, author: null, isAiGenerated: false, errorMessage: 'interno',
+      createdAt: '2026-09-06T20:00:00.000Z',
+    } as unknown as Parameters<typeof sanitizeMessageForVisitor>[0];
+
+    const sanitized = sanitizeMessageForVisitor(message);
+
+    expect(sanitized.content).toMatchObject({
+      text: '\u2022\u2022\u2022.\u2022\u2022\u2022.\u2022\u2022\u2022-\u2022\u2022',
+      hiddenFromVisitor: false,
+    });
+    expect(sanitized.errorMessage).toBeNull();
   });
 });

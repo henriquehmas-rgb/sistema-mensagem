@@ -23,11 +23,40 @@ const TOKEN_PAYLOAD: WebchatTokenPayload = {
   scope: 'webchat',
 };
 
+// ensureConversation retorna a projeção completa usada pelo CRM. Mantemos o
+// mock fiel a esse contrato para validar também o evento emitido ao abrir a
+// sessão, em vez de mascarar uma relação ausente como se fosse runtime.
+const CONVERSATION_WITH_RELATIONS = {
+  id: 'conversation-1', protocol: 'SEEG-TEST-0001', orgId: TOKEN_PAYLOAD.orgId,
+  contactId: TOKEN_PAYLOAD.sub, channelId: TOKEN_PAYLOAD.channelId, status: 'OPEN',
+  assigneeId: null, stageId: null, stagePosition: 0, departmentId: null,
+  resolutionReasonId: null, resolutionNote: null, resolvedAt: null,
+  lastIntent: null, secondaryIntent: null, alternativeRouteKey: null,
+  triageConflict: false, routingEvidence: [], triageConfidence: null,
+  triagedAt: null, caseSummary: null, clarificationCount: 0,
+  identityVerifiedAt: null, identityVerificationMethod: null,
+  aiEnabled: true, unreadCount: 0, lastMessageAt: null, lastMessagePreview: null,
+  createdAt: new Date(), updatedAt: new Date(),
+  contact: {
+    id: TOKEN_PAYLOAD.sub, orgId: TOKEN_PAYLOAD.orgId, name: 'Cliente de teste',
+    phone: '+5565999999999', email: null, avatarUrl: null, notes: null,
+    customFields: {}, memorySummary: null, memoryUpdatedAt: null,
+    createdAt: new Date(), updatedAt: new Date(),
+  },
+  assignee: null, channel: { id: TOKEN_PAYLOAD.channelId, type: 'WEBCHAT' },
+  department: null, resolutionReason: null, tags: [],
+};
+
 function buildService(overrides: { media?: Partial<MediaService>; inbound?: Partial<InboundMessageService>; prisma?: Partial<PrismaService> } = {}) {
-  const jwtService = { verifyAsync: vi.fn().mockResolvedValue(TOKEN_PAYLOAD) };
+  const jwtService = {
+    verifyAsync: vi.fn().mockResolvedValue(TOKEN_PAYLOAD),
+    signAsync: vi.fn().mockResolvedValue('visitor-token'),
+  };
   const media = { storeUpload: vi.fn(), ...overrides.media } as unknown as MediaService;
   const inbound = {
     ingestIntoConversation: vi.fn().mockResolvedValue({ messageId: 'msg-1', conversationId: 'conversation-1' }),
+    ensureContact: vi.fn().mockResolvedValue({ id: 'contact-1' }),
+    ensureConversation: vi.fn().mockResolvedValue({ conversation: CONVERSATION_WITH_RELATIONS, created: true }),
     ...overrides.inbound,
   } as unknown as InboundMessageService;
   const prisma = {
@@ -51,13 +80,36 @@ function buildService(overrides: { media?: Partial<MediaService>; inbound?: Part
     },
     ...overrides.prisma,
   } as unknown as PrismaService;
-  const realtime = {} as RealtimeService;
+  const realtime = { emitConversationNew: vi.fn() } as unknown as RealtimeService;
   const automationRunQueue = { add: vi.fn() } as never;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- jwtService mock não precisa da API completa
   const service = new WebchatService(prisma, jwtService as any, inbound, realtime, media, automationRunQueue);
   return { service, jwtService, media, inbound, prisma };
 }
+
+describe('WebchatService.createSession — contato identificado', () => {
+  it('vincula a sessão web ao telefone informado, em vez de criar visitante anônimo', async () => {
+    const organization = { id: 'org-1', name: 'SEEG' };
+    const channel = { id: 'channel-1' };
+    const { service, inbound } = buildService({
+      prisma: {
+        prismaSystem: {
+          organization: { findUnique: vi.fn().mockResolvedValue(organization) },
+          channel: { findFirst: vi.fn().mockResolvedValue(channel) },
+        },
+      } as unknown as Partial<PrismaService>,
+    });
+
+    await expect(service.createSession({
+      orgSlug: 'seeg', name: 'Cliente de teste', phone: '+5565999999999',
+    })).resolves.toMatchObject({ conversationId: 'conversation-1', visitorToken: 'visitor-token' });
+
+    expect(inbound.ensureContact).toHaveBeenCalledWith(expect.objectContaining({
+      orgId: 'org-1', channelType: 'WEBCHAT', contactName: 'Cliente de teste', contactPhone: '+5565999999999',
+    }));
+  });
+});
 
 describe('WebchatService.uploadMedia — tenant scoping', () => {
   it('grava com o orgId do visitorToken, nunca com um valor do request', async () => {

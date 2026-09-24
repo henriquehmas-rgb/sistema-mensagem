@@ -111,6 +111,23 @@ export class MetaGraphService {
   }
 
   /**
+   * Valida Instagram Direct usando o identificador do negócio Instagram.
+   * WhatsApp e Instagram possuem IDs e permissões diferentes; reutilizar o
+   * teste de WhatsApp aqui fazia um canal Instagram válido parecer inválido.
+   */
+  async testInstagramChannel(credentials: MetaChannelCredentials): Promise<void> {
+    const { accessToken, igBusinessId } = this.requireInstagramCredentials(credentials);
+    const response = await this.graphFetch(
+      `/${igBusinessId}?fields=id`,
+      accessToken,
+      { method: 'GET' },
+    );
+    if (!response.ok) {
+      throw new Error(await this.describeGraphError(response));
+    }
+  }
+
+  /**
    * Sincroniza os templates de mensagem do WABA (CONTRACTS §12):
    * GET /{wabaId}/message_templates?fields=name,language,status,category,components,
    * seguindo `paging.next` até esgotar as páginas. Retorna a lista crua (upsert
@@ -204,6 +221,27 @@ export class MetaGraphService {
       throw new Error('Graph API não retornou wamid na resposta de envio');
     }
     return { externalId };
+  }
+
+  /** A Cloud API usa o wamid recebido para o recibo e, opcionalmente, o indicador de digitação. */
+  async setWhatsAppReadState(
+    credentials: MetaChannelCredentials,
+    inboundExternalId: string,
+    typing: boolean,
+  ): Promise<void> {
+    if (!inboundExternalId.startsWith('wamid.')) return;
+    const { accessToken, phoneNumberId } = this.requireCredentials(credentials);
+    const response = await this.graphFetch(`/${phoneNumberId}/messages`, accessToken, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        status: 'read',
+        message_id: inboundExternalId,
+        ...(typing ? { typing_indicator: { type: 'text' } } : {}),
+      }),
+    });
+    if (!response.ok) await this.throwGraphSendError(response);
   }
 
   /**

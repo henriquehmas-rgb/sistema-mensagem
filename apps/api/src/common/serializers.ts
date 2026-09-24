@@ -6,6 +6,8 @@ import type {
   MessageStatus,
   MessageType,
   PipelineStage,
+  Department,
+  ResolutionReason,
   Prisma,
   Role,
   Tag,
@@ -31,6 +33,7 @@ export interface UserDto {
   name: string;
   email: string;
   role: Role;
+  departmentId: string | null;
   avatarUrl: string | null;
   isActive: boolean;
 }
@@ -65,6 +68,21 @@ export interface PipelineStageDto {
   isDefault: boolean;
 }
 
+export interface DepartmentDto {
+  id: string;
+  name: string;
+  description: string | null;
+  color: string;
+  isDefault: boolean;
+  isActive: boolean;
+}
+
+export interface ResolutionReasonDto {
+  id: string;
+  name: string;
+  isActive: boolean;
+}
+
 export interface MessageDto {
   id: string;
   conversationId: string;
@@ -81,6 +99,7 @@ export interface MessageDto {
 
 export interface ConversationDto {
   id: string;
+  protocol: string;
   orgId: string;
   contactId: string;
   contact: ContactDto;
@@ -91,6 +110,23 @@ export interface ConversationDto {
   assignee?: UserSummaryDto | null;
   stageId: string | null;
   stagePosition: number;
+  departmentId: string | null;
+  department: DepartmentDto | null;
+  resolutionReasonId: string | null;
+  resolutionReason: ResolutionReasonDto | null;
+  resolutionNote: string | null;
+  resolvedAt: string | null;
+  lastIntent: string | null;
+  secondaryIntent: string | null;
+  alternativeRouteKey: string | null;
+  triageConflict: boolean;
+  routingEvidence: string[];
+  triageConfidence: number | null;
+  triagedAt: string | null;
+  caseSummary: string | null;
+  clarificationCount: number;
+  identityVerifiedAt: string | null;
+  identityVerificationMethod: string | null;
   aiEnabled: boolean;
   unreadCount: number;
   lastMessageAt: string | null;
@@ -119,6 +155,8 @@ export const conversationInclude = {
   contact: true,
   assignee: { select: userSummarySelect },
   channel: { select: { id: true, type: true } },
+  department: true,
+  resolutionReason: true,
   tags: { include: { tag: true } },
 } as const satisfies Prisma.ConversationInclude;
 
@@ -150,6 +188,7 @@ export function toUserDto(user: User): UserDto {
     name: user.name,
     email: user.email,
     role: user.role,
+    departmentId: user.departmentId,
     avatarUrl: user.avatarUrl,
     isActive: user.isActive,
   };
@@ -186,6 +225,21 @@ export function toStageDto(stage: PipelineStage): PipelineStageDto {
   };
 }
 
+export function toDepartmentDto(department: Department): DepartmentDto {
+  return {
+    id: department.id,
+    name: department.name,
+    description: department.description,
+    color: department.color,
+    isDefault: department.isDefault,
+    isActive: department.isActive,
+  };
+}
+
+export function toResolutionReasonDto(reason: ResolutionReason): ResolutionReasonDto {
+  return { id: reason.id, name: reason.name, isActive: reason.isActive };
+}
+
 export function toMessageDto(message: MessageWithAuthor): MessageDto {
   return {
     id: message.id,
@@ -209,12 +263,20 @@ export function toMessageDto(message: MessageWithAuthor): MessageDto {
  * namespace /webchat e nas rotas públicas /api/webchat/messages.
  */
 export function sanitizeMessageForVisitor(message: MessageDto): MessageDto {
-  return message.errorMessage === null ? message : { ...message, errorMessage: null };
+  const text = typeof message.content.text === 'string' ? message.content.text : null;
+  const protectedIdentityMarker = text !== null && /^\[(?:Identidade|Validação|Resposta de validação)/.test(text);
+  // O marcador técnico não deve revelar fatores de identificação, mas também
+  // não pode desaparecer da conversa: isso quebraria a cronologia visual.
+  const content = protectedIdentityMarker
+    ? { ...message.content, text: '•••.•••.•••-••', hiddenFromVisitor: false }
+    : message.content;
+  return { ...message, content, errorMessage: null };
 }
 
 export function toConversationDto(conversation: ConversationWithRelations): ConversationDto {
   return {
     id: conversation.id,
+    protocol: conversation.protocol,
     orgId: conversation.orgId,
     contactId: conversation.contactId,
     contact: toContactDto(conversation.contact),
@@ -225,6 +287,27 @@ export function toConversationDto(conversation: ConversationWithRelations): Conv
     assignee: conversation.assignee,
     stageId: conversation.stageId,
     stagePosition: conversation.stagePosition,
+    departmentId: conversation.departmentId,
+    department: conversation.department ? toDepartmentDto(conversation.department) : null,
+    resolutionReasonId: conversation.resolutionReasonId,
+    resolutionReason: conversation.resolutionReason
+      ? toResolutionReasonDto(conversation.resolutionReason)
+      : null,
+    resolutionNote: conversation.resolutionNote,
+    resolvedAt: isoOrNull(conversation.resolvedAt),
+    lastIntent: conversation.lastIntent,
+    secondaryIntent: conversation.secondaryIntent,
+    alternativeRouteKey: conversation.alternativeRouteKey,
+    triageConflict: conversation.triageConflict,
+    routingEvidence: Array.isArray(conversation.routingEvidence)
+      ? conversation.routingEvidence.filter((item): item is string => typeof item === 'string')
+      : [],
+    triageConfidence: conversation.triageConfidence,
+    triagedAt: isoOrNull(conversation.triagedAt),
+    caseSummary: conversation.caseSummary,
+    clarificationCount: conversation.clarificationCount,
+    identityVerifiedAt: conversation.identityVerifiedAt?.toISOString() ?? null,
+    identityVerificationMethod: conversation.identityVerificationMethod,
     aiEnabled: conversation.aiEnabled,
     unreadCount: conversation.unreadCount,
     lastMessageAt: isoOrNull(conversation.lastMessageAt),

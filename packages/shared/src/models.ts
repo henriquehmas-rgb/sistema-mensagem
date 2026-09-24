@@ -19,6 +19,7 @@ export interface UserDto {
   name: string;
   email: string;
   role: Role;
+  departmentId: string | null;
   avatarUrl: string | null;
   isActive: boolean;
 }
@@ -53,7 +54,22 @@ export interface PipelineStageDto {
   isDefault: boolean;
 }
 
-export type MessageContent =
+export interface DepartmentDto {
+  id: string;
+  name: string;
+  description: string | null;
+  color: string;
+  isDefault: boolean;
+  isActive: boolean;
+}
+
+export interface ResolutionReasonDto {
+  id: string;
+  name: string;
+  isActive: boolean;
+}
+
+export type MessageContent = (
   | { text: string }
   | {
       mediaUrl: string;
@@ -63,7 +79,8 @@ export type MessageContent =
       durationSeconds?: number;
     }
   | { templateName: string; language?: string; params?: string[] }
-  | { latitude: number; longitude: number; name?: string; address?: string };
+  | { latitude: number; longitude: number; name?: string; address?: string }
+) & { hiddenFromVisitor?: boolean };
 
 export interface MessageDto {
   id: string;
@@ -81,6 +98,7 @@ export interface MessageDto {
 
 export interface ConversationDto {
   id: string;
+  protocol: string;
   orgId: string;
   contactId: string;
   contact: ContactDto;
@@ -91,6 +109,23 @@ export interface ConversationDto {
   assignee?: Pick<UserDto, "id" | "name" | "avatarUrl"> | null;
   stageId: string | null;
   stagePosition: number;
+  departmentId: string | null;
+  department: DepartmentDto | null;
+  resolutionReasonId: string | null;
+  resolutionReason: ResolutionReasonDto | null;
+  resolutionNote: string | null;
+  resolvedAt: string | null;
+  lastIntent: string | null;
+  secondaryIntent: string | null;
+  alternativeRouteKey: string | null;
+  triageConflict: boolean;
+  routingEvidence: string[];
+  triageConfidence: number | null;
+  triagedAt: string | null;
+  caseSummary: string | null;
+  clarificationCount: number;
+  identityVerifiedAt: string | null;
+  identityVerificationMethod: string | null;
   aiEnabled: boolean;
   unreadCount: number;
   lastMessageAt: string | null;
@@ -177,13 +212,14 @@ export interface MessageTemplateDto {
 
 export interface KnowledgeSourceDto {
   id: string;
-  orgId: string;
   type: SourceType;
   name: string;
   status: IngestStatus;
-  meta: Record<string, unknown>;
   chunkCount: number;
   createdAt: string;
+  updatedAt: string;
+  authority: number;
+  validUntil: string | null;
 }
 
 export interface CreateKnowledgeSourceDto {
@@ -193,6 +229,10 @@ export interface CreateKnowledgeSourceDto {
   contentUrl?: string;
   /** Conteúdo colado (type TEXT/TABLE) — CONTRACTS §6. */
   contentText?: string;
+  /** Autoridade editorial de 0 a 100; padrão 50. */
+  authority?: number;
+  /** Data ISO após a qual a fonte deixa de participar do RAG. */
+  validUntil?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -289,6 +329,91 @@ export interface DashboardAgentMetricDto {
   count: number;
 }
 
+/** Acompanhamento agregado do piloto de Suporte. Não contém cliente, contato ou mensagem. */
+export interface SupportPilotMetricsDto {
+  periodDays: number;
+  conversations: number;
+  resolved: number;
+  /** Resolvidas sem abertura de GAP em nenhum momento da conversa. */
+  resolvedWithoutGap: number;
+  active: number;
+  triageConflicts: number;
+  lowConfidenceTriages: number;
+  /** Sinal de fricção confirmado: a mesma etapa foi solicitada novamente. */
+  conversationsWithRepeatedClarification: number;
+  pendingKnowledgeGaps: number;
+  answeredKnowledgeGaps: number;
+  /** GAPs que foram revisados e descartados; não significa, isoladamente, erro da IA. */
+  dismissedKnowledgeGaps: number;
+  /** Falhas de IXC, identidade ou provedor; acompanhadas como incidente, nunca como aprendizagem. */
+  technicalIncidents: number;
+  /** Casos com evidência insuficiente ou baixa confiança que pedem revisão operacional. */
+  operationalReviews: number;
+  pendingShadowProposals: number;
+  shadowProposalsCreated: number;
+  pendingLearningCandidates: number;
+  autoPublishedLanguageCandidates: number;
+  /** Respostas que exigiam evidência e registraram ao menos uma fonte. */
+  aiRepliesWithTrace: number;
+  /** Respostas que exigiam evidência, mas não registraram fonte. */
+  aiRepliesWithoutTrace: number;
+  /** Respostas legadas ou sem classificação suficiente; não entram na cobertura factual. */
+  unclassifiedAiReplies: number;
+  /** Avaliações IXC caixa -> Olho de Deus mantidas em modo sombra. */
+  networkBoxEvaluations: number;
+  /** Coortes por caixa observadas no IXC, sem confirmação automática de impacto. */
+  networkBoxCohortsObserved: number;
+  /** Coortes com evento de rede independente no ODG; ainda não implica cliente afetado. */
+  networkBoxWithIndependentNetworkEvent: number;
+  /** Sem caixa, fonte indisponível ou ambiguidade: serve para corrigir dados/integração. */
+  networkBoxInsufficientEvidence: number;
+  /** Média até a primeira resposta humana ou IA, somente nas conversas de Suporte. */
+  avgFirstResponseSeconds: number | null;
+}
+
+export type OperationalSectorKey = "technical_support" | "billing" | "sales";
+export type OperationalReadinessStatus = "HOLD" | "SHADOW_ONLY" | "CONTROLLED_USE";
+
+export type ActivationReadinessStatus = "BLOCKED" | "PREPARING" | "READY_FOR_REVIEW";
+
+export interface ExternalChannelActivationReadinessDto {
+  channel: "WHATSAPP" | "INSTAGRAM";
+  status: ActivationReadinessStatus;
+  approvedTemplates: number;
+  blockers: string[];
+}
+
+/** Checklist somente leitura para preparar canais e evidência de rede reais. */
+export interface IntegrationActivationReadinessDto {
+  status: ActivationReadinessStatus;
+  effectiveMode: "SHADOW";
+  externalDeliveryEnabled: false;
+  sentryConfigured: boolean;
+  confirmedTopologyMappings: number;
+  shadowTopologyMappings: number;
+  channels: ExternalChannelActivationReadinessDto[];
+  blockers: string[];
+  networkDecisionBlocker: string | null;
+  manualRequirements: string[];
+}
+
+/**
+ * Parecer calculado a partir de métricas agregadas. Não habilita ações reais
+ * e não contém cliente, conversa ou conteúdo de mensagens.
+ */
+export interface OperationalReadinessDto {
+  sector: OperationalSectorKey;
+  status: OperationalReadinessStatus;
+  minimumSample: number;
+  conversations: number;
+  triageAttentionRate: number | null;
+  repeatedClarificationRate: number | null;
+  traceCoverage: number | null;
+  blockers: string[];
+  advisories: string[];
+  nextAction: string;
+}
+
 export interface DashboardMetricsDto {
   openConversations: number;
   unassignedConversations: number;
@@ -305,4 +430,9 @@ export interface DashboardMetricsDto {
   byStage: DashboardStageMetricDto[];
   byChannel: DashboardChannelMetricDto[];
   byAgent: DashboardAgentMetricDto[];
+  /** Presente quando o setor Suporte está configurado. Dados agregados dos últimos 30 dias. */
+  supportPilot?: SupportPilotMetricsDto;
+  /** Critérios consistentes para Suporte, Financeiro e Vendas, sempre em leitura. */
+  operationalReadiness?: OperationalReadinessDto[];
+  integrationActivationReadiness?: IntegrationActivationReadinessDto;
 }

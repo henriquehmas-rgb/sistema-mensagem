@@ -4,6 +4,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AuditModule } from './audit/audit.module';
+import { AiBudgetModule } from './ai-budget/ai-budget.module';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
@@ -14,16 +15,27 @@ import { ContactsModule } from './contacts/contacts.module';
 import { ConversationsModule } from './conversations/conversations.module';
 import { CryptoModule } from './crypto/crypto.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { DepartmentsModule } from './departments/departments.module';
+import { FollowUpModule } from './follow-up/follow-up.module';
 import { HealthModule } from './health/health.module';
+import { GlobalDirectivesModule } from './global-directives/global-directives.module';
 import { InboundModule } from './inbound/inbound.module';
+import { IxcModule } from './integrations/ixc/ixc.module';
 import { KnowledgeModule } from './knowledge/knowledge.module';
+import { KnowledgeGapsModule } from './knowledge-gaps/knowledge-gaps.module';
 import { MediaModule } from './media/media.module';
 import { MessagesModule } from './messages/messages.module';
 import { ObservabilityModule } from './observability/observability.module';
+import { OperationalActionsModule } from './operational-actions/operational-actions.module';
+import { OperationalSkillsModule } from './operational-skills/operational-skills.module';
+import { OperationalIncidentsModule } from './operational-incidents/operational-incidents.module';
+import { OlhoDeDeusModule } from './integrations/olho-de-deus/olho-de-deus.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { QueueModule } from './queues/queue.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { RedisModule } from './redis/redis.module';
+import { ResolutionReasonsModule } from './resolution-reasons/resolution-reasons.module';
+import { SalesModule } from './sales/sales.module';
 import { StagesModule } from './stages/stages.module';
 import { TagsModule } from './tags/tags.module';
 import { TemplatesModule } from './templates/templates.module';
@@ -73,12 +85,15 @@ function parseRedisConnection(redisUrl: string) {
     TenancyModule,
     PrismaModule,
     RedisModule,
+    ResolutionReasonsModule,
     CryptoModule,
     AuditModule,
+    AiBudgetModule,
     RealtimeModule,
     QueueModule,
     AuthModule,
     HealthModule,
+    GlobalDirectivesModule,
     UsersModule,
     ContactsModule,
     ConversationsModule,
@@ -86,16 +101,25 @@ function parseRedisConnection(redisUrl: string) {
     StagesModule,
     TagsModule,
     DashboardModule,
+    DepartmentsModule,
+    SalesModule,
+    FollowUpModule,
     KnowledgeModule,
+    KnowledgeGapsModule,
     MediaModule,
     UploadsModule,
     ChannelsModule,
     TemplatesModule,
     InboundModule,
+    IxcModule,
     WebhooksModule,
     WebchatModule,
     AutomationsModule,
     ObservabilityModule,
+    OperationalActionsModule,
+    OperationalSkillsModule,
+    OperationalIncidentsModule,
+    OlhoDeDeusModule,
   ],
   providers: [
     // Ordem importa: throttle → autenticação → RBAC; depois interceptor popula tenant

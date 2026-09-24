@@ -1,5 +1,6 @@
 import { SourceType } from '@prisma/client';
-import { IsEnum, IsOptional, IsString, IsUrl, MaxLength, MinLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsDateString, IsEnum, IsInt, IsOptional, IsString, IsUrl, Max, MaxLength, Min, MinLength } from 'class-validator';
 
 /**
  * POST /knowledge {type, name, contentText?|contentUrl?} (CONTRACTS §6).
@@ -25,4 +26,16 @@ export class CreateKnowledgeSourceDto {
   @IsUrl({ require_protocol: true })
   @MaxLength(2048)
   contentUrl?: string;
+
+  /** Autoridade editorial: 0 (auxiliar) a 100 (fonte oficial revisada). */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  authority?: number;
+
+  @IsOptional()
+  @IsDateString()
+  validUntil?: string;
 }

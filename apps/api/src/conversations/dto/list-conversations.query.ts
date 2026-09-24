@@ -1,11 +1,17 @@
 import { ChannelType, ConversationStatus } from '@prisma/client';
-import { IsEnum, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { IsBoolean, IsEnum, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 import { PaginationQuery } from '../../common/dto/pagination.query';
 
 /** Sentinela para filtrar conversas sem responsável. */
 export const UNASSIGNED = 'unassigned';
 
 export class ListConversationsQuery extends PaginationQuery {
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  attention?: boolean;
+
   @IsOptional()
   @IsEnum(ConversationStatus)
   status?: ConversationStatus;

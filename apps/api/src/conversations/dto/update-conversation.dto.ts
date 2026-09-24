@@ -24,4 +24,19 @@ export class UpdateConversationDto {
   @IsOptional()
   @IsBoolean()
   aiEnabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  departmentId?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  resolutionReasonId?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  resolutionNote?: string | null;
 }

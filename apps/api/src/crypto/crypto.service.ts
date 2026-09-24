@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:crypto';
 import type { Env } from '../config/env.validation';
 
 const ALGORITHM = 'aes-256-gcm';
@@ -44,5 +44,13 @@ export class CryptoService {
     const decipher = createDecipheriv(ALGORITHM, this.key, iv);
     decipher.setAuthTag(tag);
     return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
+  }
+
+  /**
+   * Identificador de busca não reversível sem a chave de aplicação. Útil para
+   * relacionar dados operacionais sensíveis sem persistir o valor em claro.
+   */
+  fingerprint(value: string): string {
+    return createHmac('sha256', this.key).update(value, 'utf8').digest('hex');
   }
 }

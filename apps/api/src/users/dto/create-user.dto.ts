@@ -32,4 +32,9 @@ export class CreateUserDto {
   @IsUrl()
   @MaxLength(2048)
   avatarUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  departmentId?: string;
 }

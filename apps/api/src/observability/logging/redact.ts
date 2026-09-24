@@ -24,6 +24,13 @@ const SENSITIVE_KEYS = new Set([
   'clientsecret',
   'client_secret',
   'visitortoken',
+  'cpf',
+  'cpfcnpj',
+  'cpf_cnpj',
+  'cpflast3',
+  'cpf_last_3',
+  'birthmonth',
+  'birth_month',
 ]);
 
 function isSensitiveKey(key: string): boolean {

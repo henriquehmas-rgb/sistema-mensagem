@@ -20,6 +20,10 @@ describe('isTenantModel', () => {
       'KnowledgeChunk',
       'AuditLog',
       'MessageTemplate',
+      'Department',
+      'ResolutionReason',
+      'IxcIntegration',
+      'LearningCandidate',
     ]) {
       expect(isTenantModel(model), model).toBe(true);
     }

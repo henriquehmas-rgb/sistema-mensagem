@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { QueueModule } from '../queues/queue.module';
+import { IxcModule } from '../integrations/ixc/ixc.module';
 import { InboundMessageService } from './inbound-message.service';
 
 /**
@@ -9,7 +10,7 @@ import { InboundMessageService } from './inbound-message.service';
  * ai-reply/automation-run.
  */
 @Module({
-  imports: [QueueModule],
+  imports: [QueueModule, IxcModule],
   providers: [InboundMessageService],
   exports: [InboundMessageService],
 })
