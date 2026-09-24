@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "department": "technical_support",
+  "governance": "REVIEW_REQUIRED",
+  "origin": "SEEG_SUPPORT_PROTOCOL_DERIVED",
+  "publishToRag": false,
+  "approvalRequired": true,
+  "articles": [
+    {"id": "support_identity_v1", "file": "01-identidade-e-consulta-protegida.md", "authority": 70},
+    {"id": "support_connection_los_v1", "file": "02-sem-conexao-e-los.md", "authority": 70},
+    {"id": "support_slowness_v1", "file": "03-lentidao-e-instabilidade.md", "authority": 70},
+    {"id": "support_wifi_equipment_v1", "file": "04-wifi-e-equipamento.md", "authority": 70},
+    {"id": "support_ticket_order_v1", "file": "05-chamado-e-ordem-de-servico.md", "authority": 80},
+    {"id": "support_app_credentials_v1", "file": "06-aplicativo-e-credenciais.md", "authority": 70},
+    {"id": "support_telephony_v1", "file": "07-telefonia.md", "authority": 70}
+  ]
+}

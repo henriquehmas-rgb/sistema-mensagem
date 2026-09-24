@@ -27,7 +27,7 @@ Enums em SCREAMING_CASE. Ids: `cuid()`. Timestamps `createdAt`/`updatedAt` em tu
 - **Contact**: id, orgId, name, phone?, email?, avatarUrl?, notes?, customFields Json, unique(orgId, phone)
 - **ContactIdentity**: id, orgId, contactId, channelType, externalId (wa_id / ig user id / webchat visitor id), unique(orgId, channelType, externalId)
 - **PipelineStage**: id, orgId, name, color, position Int, isHumanHandoff Boolean (coluna de intervenção humana), isDefault Boolean
-- **Conversation**: id, orgId, contactId, channelId, status `ConversationStatus{OPEN,PENDING,RESOLVED,SNOOZED}`, assigneeId? (User), stageId? (PipelineStage), stagePosition Float (ordenação no kanban), aiEnabled Boolean default true, unreadCount Int, lastMessageAt?, lastMessagePreview?
+- **Conversation**: id, protocol, orgId, contactId, channelId, status `ConversationStatus{OPEN,PENDING,RESOLVED,SNOOZED}`, assigneeId?, stageId?, departmentId?, lastIntent?, triageConfidence?, triagedAt?, resolutionReasonId?, resolutionNote?, resolvedAt?, stagePosition Float, aiEnabled Boolean, unreadCount Int, lastMessageAt?, lastMessagePreview?
 - **Message**: id, orgId, conversationId, direction `MessageDirection{INBOUND,OUTBOUND}`, type `MessageType{TEXT,IMAGE,AUDIO,VIDEO,DOCUMENT,STICKER,LOCATION,TEMPLATE,SYSTEM}`, content Json ({text} | {mediaUrl,mimeType,caption,filename} | {templateName,params} | {latitude,longitude}), status `MessageStatus{PENDING,SENT,DELIVERED,READ,FAILED}`, externalId? (wamid, unique por org), authorId? (User que enviou; null = contato ou IA), isAiGenerated Boolean, errorMessage?, index(orgId, conversationId, createdAt)
 - **Tag**: id, orgId, name, color, unique(orgId, name)
 - **ConversationTag**: conversationId, tagId (m2m)
@@ -38,6 +38,7 @@ Enums em SCREAMING_CASE. Ids: `cuid()`. Timestamps `createdAt`/`updatedAt` em tu
 - **RefreshToken**: id, userId, tokenHash, expiresAt, revokedAt?
 - **AuditLog**: id, orgId, userId?, action, entity, entityId, meta Json
 - **WebhookEventLog**: id, orgId?, source, externalEventId? (dedupe), payload Json, status, index(externalEventId)
+- **IxcIntegration**: id, orgId (unique), baseUrl, encryptedCredentials (usuário + token em AES-256-GCM), isEnabled, lastTestedAt?, lastTestSucceeded?. Nunca retornar credenciais.
 
 ## 4. Filas BullMQ (Redis) — prefixo `sm`
 | Fila | Payload | Produtor → Consumidor |
@@ -86,6 +87,9 @@ Padrão de resposta: recurso direto; listas `{ data, total, page, pageSize }`. E
 - `GET/POST/PATCH /channels` (credenciais só na criação/edição; nunca retornadas), `POST /channels/:id/test`
 - `GET/POST/DELETE /knowledge`, status de ingestão via GET
 - `GET /dashboard/metrics` (contadores: abertas, por etapa, por agente, tempo médio resposta)
+- **Prontidão unificada (leitura, JWT)**: `GET /dashboard/readiness` retorna sempre em blocos separados `operational` (Suporte, Financeiro e Vendas) e `integration` (canais, alertas e topologia), sem percentual subjetivo. `GET/POST /dashboard/readiness/snapshots` (ADMIN|SUPERVISOR) lista ou congela somente esses agregados para comparação histórica; um snapshot não habilita entrega, escrita externa, automação ou roteamento e é auditado.
+- **CRM Comercial Governado (interno, JWT)**: `GET/POST /sales/pipelines`, `POST /sales/pipelines/:pipelineId/stages`, `GET/POST /sales/opportunities`, `PATCH /sales/opportunities/:id`, `GET/POST /sales/opportunities/:id/tasks`, `PATCH /sales/tasks/:id` e `GET /sales/metrics`. Oportunidades pertencem ao contato e, quando aplicável, à conversa que as originou; o histórico continua centralizado no CRM. AGENT vê e opera somente o próprio departamento; ADMIN/SUPERVISOR atua na organização. Mudança para etapa final ou em espera exige motivo; retomada de etapa ativa limpa o motivo/fechamento anterior. A fundação não envia mensagens, não redistribui atendimentos, não aciona integrações e não cria automação externa.
+- **IXC somente leitura**: `GET /integrations/ixc` (ADMIN), `PUT /integrations/ixc` (ADMIN; configura/rotaciona segredo), `POST /integrations/ixc/test` (ADMIN), `GET /integrations/ixc/customers/search?id=|cpfCnpj=|phone=` (autenticado, exatamente um filtro, 30/min), e consultas por cliente em `/contracts`, `/service-orders` e `/connections` (autenticado, 30/min). `/invoices` é restrita a ADMIN/SUPERVISOR (20/min) enquanto o fluxo de identidade não estiver homologado. O cliente envia exclusivamente `GET` com corpo JSON, Basic Auth e `ixcsoft: listar`; não existem rotas IXC de escrita nesta fase. Respostas são reduzidas por whitelist: conexão nunca expõe senha/IP/MAC/Wi-Fi e fatura nunca expõe boleto, linha digitável ou Pix.
 - **Health público (sem JWT, isento de rate limit, FORA do prefixo `/v1`)**: `GET /api/health` → `{ status: 'ok'|'degraded', db: 'up'|'down', redis: 'up'|'down' }` — sempre HTTP 200; usado pelo healthcheck do Docker (infra/docker-compose.yml) e pelo deploy.sh
 - **Webhooks públicos (sem JWT)**: `GET /api/webhooks/meta` (hub.challenge verify), `POST /api/webhooks/meta` (**validar `X-Hub-Signature-256` HMAC SHA-256 com META_APP_SECRET sobre o raw body**; 200 sempre; enfileirar)
 - **Webchat público**: `POST /api/webchat/session {orgSlug}` → `{visitorToken, conversationId, orgName}` (**rate limit 10/min** — cria Contact+Conversation reais sem auth); `POST /api/webchat/messages`; `GET /api/webchat/messages?after=`; socket namespace `/webchat` com visitorToken (recebe `message:new {message}`, `message:status` e `typing` do agente; emite `typing {isTyping}` — relayado ao `/rt` como `typing {conversationId, contactId, isTyping}`). Mensagens entregues ao visitante (REST e relay do `/webchat`) SEMPRE com `errorMessage: null` — detalhe interno nunca sai da org (status FAILED basta). Widget embutível: `GET /webchat.js` (loader) + página `/webchat/widget?org=&parent=` (web). **Criação LAZY**: o loader só monta o iframe no primeiro clique na bolha e o widget só chama `POST /session` na PRIMEIRA mensagem do visitante — pageview/abertura nunca criam contato/conversa nem disparam automações. Canal WEBCHAT: `config.orgSlug` é server-autoritativo (a api grava o slug real da org; valor divergente → 400).
@@ -94,12 +98,19 @@ Padrão de resposta: recurso direto; listas `{ data, total, page, pageSize }`. E
 ## 7. Serviço de IA (FastAPI) — interno, auth header `X-Service-Token: ${AI_SERVICE_TOKEN}`
 - `POST /ingest {org_id, source_id, type, content_url?|content_text?, meta}` → processa async, chunking + embeddings + upsert pgvector, callback `PATCH api /internal/knowledge/:id/status` (ou atualiza direto no banco — decisão: **atualiza direto no Postgres**, mesma DATABASE_URL)
 - `POST /query {org_id, query, top_k=6}` → `{chunks: [{content, score, source_id}]}` — SEMPRE filtra org_id
-- `POST /reply {org_id, conversation_id, messages: [{role, content}], contact: {...}}` → `{reply: str|null, handoff: bool, handoff_reason?, confidence: float, sources: []}`
+- `POST /reply {org_id, conversation_id, messages: [{role, content}], contact: {...}}` → `{reply, handoff, handoff_reason?, confidence, sources, intent, route_key, triage_confidence}`
   - Pipeline: busca semântica (pgvector) → rerank → prompt com guardrails (responder SÓ com base no contexto; se não souber, `handoff=true`) → LLM (env `AI_PROVIDER=openai|anthropic|google|mock`; **mock** = respostas determinísticas p/ dev sem chave)
+  - Economia de contexto: a busca começa com até 3 chunks em perguntas curtas e confiáveis, sobe para 4 em perguntas médias e até 6 em consultas longas ou de baixa confiança, sempre respeitando `retrieval_top_k`.
+  - Triagem antifalhas: classifica a necessidade atual sem prender a conversa ao setor anterior; múltiplas intenções reduzem a confiança e geram pergunta específica antes do roteamento. Ausência de evidência mantém `general` como fallback seguro.
   - Detecção de intenção de atendimento humano (pedido explícito, frustração, assunto sensível) → `handoff=true`
 - `GET /health`
+- `POST /learning/candidate {question, answer}` → `{eligible, content?, rejection_reason?}` — normaliza a solução humana e rejeita dados de pagamento, documentos, contatos e URLs antes de qualquer persistência.
 
-Quando `handoff=true`: api move a conversa para a stage com `isHumanHandoff=true`, desliga `aiEnabled`, emite `conversation:moved` + `conversation:updated`.
+Triagem determinística inicial: `technical_support→Suporte`, `billing→Financeiro`, `sales→Vendas` e `cancellation→Vendas` como especialidade de retenção; desconhecido usa Atendimento Geral apenas como fallback técnico. A classificação considera a necessidade atual, normaliza caixa/acentos e tolera erros de digitação nos termos centrais. A API resolve `route_key` contra `Department.routingKey` ativo e usa o fallback padrão quando necessário. Quando `handoff=true`, cria um GAP interno deduplicado, mantém `aiEnabled=true`, registra a mensagem SYSTEM, informa o cliente de forma natural e aguarda orientação. A orientação autorizada volta ao contexto e a IA retoma; transferência real só ocorre por ação humana explícita.
+
+GAPs podem ser consultados e respondidos por ADMIN/SUPERVISOR em toda a organização. Um AGENT autenticado acessa somente GAPs vinculados ao seu próprio departamento ativo; dúvida sem setor ou de outro setor permanece invisível e não pode ser respondida por ele. A API aplica esse isolamento independentemente da interface.
+
+Aprendizado governado: ao encerrar uma conversa, a última resposta humana e a pergunta anterior são sanitizadas, recebem nota de qualidade e impressão digital semântica simplificada, e são gravadas como `LearningCandidate(PENDING)`, no máximo uma por conversa. Conteúdo fraco ou sensível é descartado. Apenas orientação procedural de Suporte, com qualidade alta e sem dados pessoais, conta, cobertura, preço, prazo ou outro fato dinâmico pode ter uso `AUTO_REVIEW_REQUIRED`; Financeiro e Vendas nunca recebem esse uso provisório. Todo candidato, inclusive o provisório, passa por revisão humana semanal: aprovar torna a fonte definitiva e rejeitar remove a fonte provisória. `GET /knowledge/patterns` apresenta ocorrências em 7/30/90 dias e crescimento contra os 30 dias anteriores.
 
 ## 8. Variáveis de ambiente (`.env` na raiz de infra; `.env.example` versionado)
 ```
@@ -107,18 +118,27 @@ DATABASE_URL=postgresql://sm:sm@postgres:5432/sm
 REDIS_URL=redis://redis:6379
 JWT_SECRET= JWT_REFRESH_SECRET= APP_ENCRYPTION_KEY= (32 bytes hex)
 AI_SERVICE_URL=http://ai:8100  AI_SERVICE_TOKEN=
-AI_PROVIDER=mock  OPENAI_API_KEY=  ANTHROPIC_API_KEY=  GOOGLE_API_KEY=
+AI_PROVIDER=mock  AI_PRIMARY_PROVIDER=  AI_AUXILIARY_PROVIDER=  AI_REVIEW_PROVIDER=  AI_FALLBACK_PROVIDER=
+OPENAI_CHAT_MODEL=gpt-5.6-luna  ANTHROPIC_CHAT_MODEL=claude-sonnet-5
+OPENAI_EMBEDDING_MODEL=text-embedding-3-small  OPENAI_REASONING_EFFORT=low
+OPENAI_MAX_OUTPUT_TOKENS=512  ANTHROPIC_MAX_OUTPUT_TOKENS=1024
+ANTHROPIC_PROMPT_CACHE_ENABLED=true  ANTHROPIC_PROMPT_CACHE_TTL=5m
+AI_REPLY_DEBOUNCE_MS=3500  OPENAI_API_KEY=  ANTHROPIC_API_KEY=  GOOGLE_API_KEY=
 META_APP_SECRET=  META_VERIFY_TOKEN=  META_GRAPH_VERSION=v21.0
 PUBLIC_URL=https://chat.srv1450678.hstgr.cloud
+IXC_ALLOWED_HOSTS=ixc.exemplo.com.br  (CSV de hosts exatos; obrigatório para configurar o IXC)
 NEXT_PUBLIC_API_URL=/api/v1  NEXT_PUBLIC_SOCKET_PATH=/socket.io
 MEDIA_DIR=./storage/media  (opcional; docker-compose define /data/media, volume media_data)
 UPLOAD_DAILY_QUOTA_PER_ORG=300  (opcional; cota diária de uploads outbound por org, §13)
 ```
 
+No desenho preparado para homologação, Anthropic/Sonnet é o gerador principal e OpenAI/Luna é auxiliar opcional. Regras determinísticas, IXC, RAG e skills são executados antes dos modelos. O Luna só compacta o estado quando a conversa apresenta múltiplos assuntos, baixa confiança, histórico longo ou mensagem extensa; sua saída é não autoritativa. Falha do auxiliar não bloqueia o Sonnet. Respostas simples não chamam o Luna.
+
 ## 9. Segurança / Multitenancy (obrigatório)
 - JWT payload: `{ sub: userId, orgId, role }`. RBAC via decorator `@Roles()` + guard.
 - **Prisma Client Extension** com AsyncLocalStorage: toda query de modelos tenant recebe `where { orgId }` injetado automaticamente; criação injeta `orgId`. Bypass explícito só em código de webhook/system com `prismaSystem`.
 - Credenciais de canal: AES-256-GCM (`APP_ENCRYPTION_KEY`), IV aleatório por registro, nunca logadas nem retornadas em API.
+- Credenciais IXC seguem a mesma cifra. A base URL exige HTTPS, caminho `/webservice/v1`, sem credenciais/query/fragmento, e hostname presente em `IXC_ALLOWED_HOSTS` (defesa SSRF). Respostas externas limitadas a 1MB e timeout de 8s; valores de CPF/telefone não entram no AuditLog.
 - Rate limit no gateway (`@nestjs/throttler`): auth 5/min, `POST /api/webchat/session` 10/min, webhooks e `GET /api/health` isentos, demais 120/min.
 - Anti-framing (web/Next `headers()`): `X-Frame-Options: DENY` + CSP `frame-ancestors 'none'` em TODAS as rotas do web, EXCETO `/webchat/widget` (embutível por design — `frame-ancestors *` explícito).
 - Senhas: argon2id. Headers: helmet. CORS: PUBLIC_URL apenas.
@@ -269,3 +289,48 @@ e `knowledge_chunks` diretamente via SQL usando exatamente esses nomes.
   `memoryUpdatedAt: string | null`; `GET/PATCH /contacts/:id` (CONTRACTS §6) já cobre leitura e
   limpeza — `UpdateContactDto` ganha `memorySummary?: string | null` opcional (ADMIN/SUPERVISOR
   — checar/alinhar RBAC do PATCH existente).
+
+## Skills operacionais versionadas
+
+- `OperationalSkill` é sempre escopada por `org_id` e opcionalmente por departamento.
+- Uma chave pode possuir várias versões, mas somente uma deve permanecer `ACTIVE`.
+- Toda criação e nova versão nasce `DRAFT`; publicação requer revisão e aprovação explícitas.
+- O histórico do OPA não pode ativar, aprovar ou alterar uma skill automaticamente.
+- Conteúdo encontrado no RAG não concede autorização para executar uma ação; fontes e ações precisam estar permitidas pela skill ativa.
+- Ativação e mudança de estado são restritas a `ADMIN` e auditadas.
+- Rotas: `GET/POST /operational-skills`, `POST /operational-skills/:id/versions` e `PATCH /operational-skills/:id/status`.
+- O `/reply` recebe apenas skills ativas, seleciona uma pelo setor e pelos gatilhos da mensagem atual e injeta somente o protocolo escolhido.
+- `allowedSources` vazio permite as fontes normalmente recuperadas; preenchido passa a ser uma allowlist exata de `KnowledgeSource.id` (ou `*` para liberação explícita de todas).
+- `minimumConfidence` nunca reduz o piso geral de segurança; somente pode torná-lo mais rigoroso.
+
+### Barreira de ações operacionais
+
+`POST /operational-actions/simulate` continua sem escrita externa e agora exige `skillId`. Antes de consultar o IXC, a API valida no próprio tenant: conversa e skill existentes, skill `ACTIVE` e não expirada, setor compatível, ação presente em `allowedActions` e ausente de `forbiddenActions`, identidade válida e confiança da triagem acima de `minimumConfidence`.
+
+Se qualquer validação falhar, a resposta inclui `authorizedForSimulation=false` e os `blockers`, não consulta o IXC e mantém `externalReadPerformed=false` e `externalWritePerformed=false`. Quando passa, a leitura serve apenas para detectar ticket/OS aberto e gerar uma chave determinística de deduplicação; `requiresApproval` permanece sempre verdadeiro.
+
+Propostas internas usam `OperationalActionRequest` e os estados `PENDING_REVIEW`, `APPROVED`, `REJECTED` e `CANCELLED`. `POST /operational-actions/proposals` repete o gate e só persiste quando a simulação está autorizada e sem duplicidade aberta; a chave `(org_id, deduplication_key)` torna retries idempotentes. `GET /operational-actions/proposals` lista a fila e `PATCH /operational-actions/proposals/:id/review` aprova ou rejeita. O solicitante não pode revisar a própria proposta. Aprovação não executa integração e qualquer execução futura deverá revalidar toda a política.
+
+No frontend, `/approvals` é ocultada para `AGENT`; a API mantém `ADMIN|SUPERVISOR` como controle autoritativo. A tela não apresenta identificadores de cliente/contrato no cartão principal, desabilita revisão própria e exige confirmação antes de aprovar ou rejeitar.
+
+### Avaliação em modo sombra
+
+`IxcOperationalEvidence.customerRef` preserva internamente o cliente identificado sem incluí-lo nos blocos do prompt. Para skills com ação operacional suportada, `evaluateShadowAction` exige ação única e não proibida, ausência de handoff/esclarecimento, confiança mínima, evidência disponível, cliente inequívoco, exatamente um contrato ativo e ausência de duplicidade aberta. O processor grava `ai.operational-action.shadow.eligible|blocked` com ação e motivo, mas não persiste `OperationalActionRequest` nem realiza nova leitura/escrita externa.
+
+### Condições comerciais sensíveis
+
+Proposta personalizada, concessão de desconto, alteração de preço e mudança de condição comercial são sempre sujeitas a revisão humana, independentemente de skill, confiança ou provedor de IA. A IA pode informar preços e campanhas já publicados no RAG, mas pedidos de negociação específica geram GAP `commercial_approval_required`. A resposta ao cliente informa naturalmente que a condição será validada com o responsável. O guardrail de saída bloqueia compromisso comercial sem uma resposta humana associada especificamente a esse GAP; uma orientação de outro tipo não libera a condição.
+
+### Administração de protocolos
+
+### Follow-up controlado por conversa
+
+- `FollowUpSequence` fica vinculada de forma única à conversa existente. Como a conversa já pertence a um contato e canal, o histórico permanece na mesma aba do CRM e a cadência não redistribui nem cria atendimento paralelo.
+- Só nasce de consentimento explícito em resposta a um pedido inequívoco de retomada com atualização. A detecção guarda a sequência e a auditoria, não a frase de consentimento nem dados sensíveis.
+- Abrange `technical_support`, `billing` e `sales`; o ciclo possui no máximo quatro etapas (1, 3, 7 e 14 dias). Qualquer nova mensagem do cliente pausa a sequência; opt-out a cancela. Conversa fechada pausa a etapa pendente. Assumir atendimento humano não pausa a cadência: o responsável de follow-up é configurado separadamente e pode ser o mesmo para os três setores.
+- A fila de follow-up apenas muda uma etapa vencida para `READY_FOR_REVIEW`. Ela não cria mensagem, não usa `message-outbound`, não dispara template e não chama WhatsApp ou Instagram.
+- Apenas uma mensagem humana da própria conversa, confirmada como `SENT`, pode registrar a etapa como efetivamente realizada e agendar a próxima. Não existe “contato realizado” manual.
+- Rotas administrativas: `GET /follow-ups`, `PATCH /follow-ups/:id/review` e `GET /follow-ups/configuration` são restritas a `ADMIN|SUPERVISOR`; `PATCH /follow-ups/configuration` é exclusivo de `ADMIN` para definir o responsável padrão. Cada evento é auditado.
+- Templates aprovados e canais reais continuam sendo pré-requisitos para um futuro piloto de envio; não foram ativados por esta cadência de revisão.
+
+`/protocols` é visível a `ADMIN|SUPERVISOR`; somente `ADMIN` altera o ciclo. A ativação possui validação autoritativa na API e requer `owner`, `allowedSources` não vazio e `protocolSteps` não vazio. `*` em `allowedSources` significa liberação consciente de todas as fontes e deve ser usado somente após revisão. Se `allowedActions` contiver ação comercial sensível, `reviewConditions` também é obrigatório. A tela nunca ativa diretamente um rascunho: preserva `DRAFT → IN_REVIEW → APPROVED → ACTIVE`.
