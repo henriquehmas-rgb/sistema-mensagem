@@ -1,34 +1,50 @@
-# deps
-node_modules/
-.pnpm-store/
-__pycache__/
-*.pyc
-.venv/
-venv/
-
-# builds
-.next/
-dist/
-build/
-out/
-*.tsbuildinfo
-
-# env & secrets — NUNCA versionar
+# Segredos e configuracao local
 .env
 .env.*
 !.env.example
 *.pem
 *.key
-credentials*.json
+.tmp_*
 
-# logs & misc
+# Dependencias e artefatos
+node_modules/
+**/node_modules/
+.venv/
+**/.venv/
+.next/
+**/.next/
+dist/
+**/dist/
+coverage/
+**/coverage/
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+**/.pytest_cache/
+
+# Ferramentas temporarias locais
+vendor_paramiko/
+.tmp_paramiko/
+.tmp_paramiko2/
+
+# Regras restauradas da versao original (removidas por engano)
+*.tsbuildinfo
 *.log
 .DS_Store
 Thumbs.db
-coverage/
 .turbo/
-
-# uploads / media local (raiz apenas — NÃO bloquear código-fonte como apps/api/src/uploads/)
+build/
+out/
+credentials*.json
 /uploads/
 /storage/
 /services/ai/storage/
+
+# Backups manuais de deploy — NUNCA versionar (contem dumps do banco
+# com dados de clientes e arquivos .env com segredos de producao)
+.deploy-backups/
+*.backup-*
+*.bak
+*.bak-*
+*.sql.gz
+*.tar.gz
