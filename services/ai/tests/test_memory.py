@@ -5,7 +5,6 @@ from __future__ import annotations
 from src.handoff import (
     SENSITIVE_DOCUMENT_DATA_REASON,
     SENSITIVE_PAYMENT_DATA_REASON,
-    detect_handoff,
     detect_sensitive_data,
 )
 
@@ -27,7 +26,7 @@ def test_no_messages_returns_existing_summary_without_calling_llm(
 ) -> None:
     from src.routes import memory as memory_route
 
-    def _boom():
+    def _boom(*, role="primary"):
         raise AssertionError("LLM nao deveria ser chamado quando nao ha mensagens novas")
 
     monkeypatch.setattr(memory_route, "get_chat_provider", _boom)
@@ -78,8 +77,7 @@ def test_fusion_ignores_assistant_only_messages_and_keeps_existing_summary(
 # ----------------------------------------------------------------- dado sensivel
 def test_sensitive_payment_data_never_appears_in_summary(client, auth_headers) -> None:
     text = "Meu cartão é 4111 1111 1111 1111, pode cobrar"
-    # sanity: mesma heuristica de handoff.py reconhece este texto como dado sensivel.
-    assert detect_handoff(text) == SENSITIVE_PAYMENT_DATA_REASON
+    assert detect_sensitive_data(text) == SENSITIVE_PAYMENT_DATA_REASON
 
     response = _summarize(client, auth_headers, None, [{"role": "user", "content": text}])
     assert response.status_code == 200
@@ -91,7 +89,7 @@ def test_sensitive_payment_data_never_appears_in_summary(client, auth_headers) -
 
 def test_sensitive_document_data_never_appears_in_summary(client, auth_headers) -> None:
     text = "O número do meu cartão não está passando, cvv 123"
-    assert detect_handoff(text) == SENSITIVE_PAYMENT_DATA_REASON
+    assert detect_sensitive_data(text) == SENSITIVE_PAYMENT_DATA_REASON
 
     response = _summarize(client, auth_headers, "Cliente novo.", [{"role": "user", "content": text}])
     assert response.status_code == 200
@@ -129,13 +127,9 @@ def test_sensitive_unformatted_cpf_never_appears_in_summary(client, auth_headers
 def test_sensitive_data_scrubbed_even_when_another_rule_matches_first(
     client, auth_headers
 ) -> None:
-    """Regressão: `detect_handoff` (usado para o MOTIVO de handoff em /reply) para
-    na PRIMEIRA regra que casar — "cancelamento" vem antes do dado sensível na
-    ordem de `_RULES`. O scrub de memória usa `detect_sensitive_data`
-    (independente dessa prioridade) e não pode deixar o CPF vazar aqui."""
+    """Cancelamento continua autônomo, mas o scrub dedicado não pode deixar o CPF vazar."""
     text = "Quero cancelar, meu CPF é 123.456.789-00"
-    assert detect_handoff(text) == "cancelamento"  # motivo de handoff não é o de dado sensível
-    assert detect_sensitive_data(text) == SENSITIVE_DOCUMENT_DATA_REASON  # mas o scrub pega
+    assert detect_sensitive_data(text) == SENSITIVE_DOCUMENT_DATA_REASON
 
     response = _summarize(client, auth_headers, None, [{"role": "user", "content": text}])
     assert response.status_code == 200
@@ -169,7 +163,7 @@ def test_llm_failure_returns_existing_summary_unchanged_never_propagates(
         def generate(self, messages, system):  # noqa: ANN001 — assinatura do ChatProvider
             raise RuntimeError("provider offline")
 
-    monkeypatch.setattr(memory_route, "get_chat_provider", lambda: _BoomProvider())
+    monkeypatch.setattr(memory_route, "get_chat_provider", lambda **_kwargs: _BoomProvider())
 
     existing = "Resumo original que não pode ser perdido."
     messages = [{"role": "user", "content": "Alguma informação nova qualquer."}]

@@ -10,22 +10,26 @@ POSITIVE_CASES = [
     ("Quero falar com um atendente agora, por favor", "pedido_de_atendimento_humano"),
     ("Me transfere para uma pessoa de verdade", "pedido_de_atendimento_humano"),
     ("Não quero falar com robô, quero atendimento humano", "pedido_de_atendimento_humano"),
-    ("Quero cancelar minha assinatura hoje", "cancelamento"),
-    ("Isso é um absurdo, vou entrar no PROCON", "reclamacao_grave"),
-    ("Que merda de serviço é esse?", "linguagem_ofensiva"),
-    ("Meu cartão é 4111 1111 1111 1111, pode cobrar", "dados_sensiveis_pagamento"),
-    ("O número do meu cartão não está passando, cvv 123", "dados_sensiveis_pagamento"),
-    ("Meu CPF é 123.456.789-00, pode conferir meu cadastro?", "dados_sensiveis_documento"),
-    ("meu cpf eh 12345678900 pode conferir", "dados_sensiveis_documento"),
-    ("Preciso atualizar o número do meu RG no cadastro", "dados_sensiveis_documento"),
+    ("Consegue me dar um desconto especial?", "commercial_approval_required"),
+    ("Quero uma proposta personalizada para minha empresa", "commercial_approval_required"),
+    ("Dá para negociar o valor da mensalidade?", "commercial_approval_required"),
+    ("Se fizer um descontinho eu fecho hoje", "commercial_approval_required"),
+    ("Consegue dar uma reduzidinha no valor?", "commercial_approval_required"),
+    ("Tem como melhorar o preço só pra mim?", "commercial_approval_required"),
 ]
 
 NEGATIVE_CASES = [
     "Qual o horário de funcionamento da loja?",
     "Vocês entregam no bairro Centro?",
     "Quanto custa o plano premium por mês?",
+    "Quais são os descontos que já constam na campanha publicada?",
     "Como acompanho o status do meu pedido?",
     "O atendimento de vocês funciona aos sábados?",
+    "Quero cancelar minha assinatura hoje",
+    "Isso é um absurdo, vou entrar no PROCON",
+    "Que merda de serviço é esse?",
+    "Meu cartão é 4111 1111 1111 1111, pode cobrar",
+    "Meu CPF é 123.456.789-00, pode conferir meu cadastro?",
     # Bare "documento" sem cpf/rg/identidade não deve disparar handoff — a
     # palavra sozinha é comum demais em pt-BR para justificar o falso positivo.
     "Posso te enviar um documento assinado por aqui?",
@@ -45,4 +49,4 @@ def test_handoff_negative_cases(text: str) -> None:
 
 def test_detection_ignores_accents_and_case() -> None:
     assert detect_handoff("QUERO FALAR COM UM ATENDENTE") == "pedido_de_atendimento_humano"
-    assert detect_handoff("isso e inaceitavel!") == "reclamacao_grave"
+    assert detect_handoff("isso e inaceitavel!") is None

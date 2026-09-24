@@ -65,6 +65,20 @@ class OpenAIEmbeddings(EmbeddingProvider):
             response = self._client.embeddings.create(model=self._model, input=batch)
             ordered = sorted(response.data, key=lambda item: item.index)
             vectors.extend(item.embedding for item in ordered)
+            from .llm.base import UsageSnapshot
+            from .usage_tracker import record_usage
+            usage = getattr(response, "usage", None)
+            record_usage(
+                "openai",
+                UsageSnapshot(
+                    model=self._model,
+                    input_tokens=int(
+                        getattr(usage, "prompt_tokens", 0)
+                        or getattr(usage, "total_tokens", 0)
+                        or 0
+                    ),
+                ),
+            )
         return vectors
 
 
@@ -87,3 +101,24 @@ def get_embedding_provider(settings: Settings | None = None) -> EmbeddingProvide
     if settings.ai_provider == "openai":
         raise RuntimeError("OPENAI_API_KEY e obrigatoria quando AI_PROVIDER=openai")
     return MockEmbeddings()
+
+
+def embedding_provider_fingerprint(settings: Settings | None = None) -> str:
+    """Identifica o modelo que gerou os vetores, sem incluir qualquer segredo."""
+    settings = settings or get_settings()
+    if settings.ai_provider == "mock" or not settings.openai_api_key:
+        return "mock:v1"
+    return f"openai:{settings.openai_embedding_model}"
+
+
+def production_ai_ready(settings: Settings | None = None) -> bool:
+    """A configuração tem chat e embeddings semânticos reais disponíveis."""
+    settings = settings or get_settings()
+    if settings.ai_provider == "mock":
+        return False
+    chat_key_present = {
+        "openai": bool(settings.openai_api_key),
+        "anthropic": bool(settings.anthropic_api_key),
+        "google": bool(settings.google_api_key),
+    }.get(settings.ai_provider, False)
+    return chat_key_present and embedding_provider_fingerprint(settings).startswith("openai:")

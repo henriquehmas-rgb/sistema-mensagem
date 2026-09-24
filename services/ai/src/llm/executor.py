@@ -12,10 +12,12 @@ encerrar a chamada — esse timeout e configurado com llm_timeout_seconds
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import logging
 
 from .base import ChatMessage, ChatProvider
 
 _LLM_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="llm")
+logger = logging.getLogger(__name__)
 
 
 def generate_with_timeout(
@@ -32,7 +34,25 @@ def generate_with_timeout(
     """
     future = _LLM_EXECUTOR.submit(provider.generate, messages, system)
     try:
-        return future.result(timeout=timeout)
+        result = future.result(timeout=timeout)
+        # Provedores internos/legados e doubles de teste podem implementar
+        # apenas generate(); telemetria e opcional e nunca pode quebrar resposta.
+        usage = getattr(provider, "last_usage", None)
+        if usage is not None:
+            logger.info(
+                "llm_usage provider=%s model=%s input_tokens=%d output_tokens=%d "
+                "cached_input_tokens=%d cache_creation_input_tokens=%d reasoning_tokens=%d",
+                provider.name,
+                usage.model,
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.cached_input_tokens,
+                usage.cache_creation_input_tokens,
+                usage.reasoning_tokens,
+            )
+            from ..usage_tracker import record_usage
+            record_usage(provider.name, usage)
+        return result
     except TimeoutError:
         future.cancel()  # no-op se ja em execucao; evita rodar futures enfileiradas
         raise

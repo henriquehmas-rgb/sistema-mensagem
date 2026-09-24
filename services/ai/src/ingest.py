@@ -30,7 +30,7 @@ from pypdf import PdfReader
 
 from . import db
 from .config import get_settings
-from .embeddings import get_embedding_provider
+from .embeddings import embedding_provider_fingerprint, get_embedding_provider
 from .schemas import IngestRequest
 
 logger = logging.getLogger(__name__)
@@ -235,7 +235,13 @@ def extract_content(payload: IngestRequest) -> str:
     return extract_html(fetched.text)
 
 
-def _replace_chunks(org_id: str, source_id: str, chunks: list[str], vectors: list[list[float]]) -> None:
+def _replace_chunks(
+    org_id: str,
+    source_id: str,
+    chunks: list[str],
+    vectors: list[list[float]],
+    embedding_fingerprint: str,
+) -> None:
     """Transacao unica: lock por fonte → DELETE chunks antigos → INSERT novos → READY."""
     rows = [
         (db.new_cuid(), org_id, source_id, content, db.vector_literal(vector))
@@ -260,10 +266,18 @@ def _replace_chunks(org_id: str, source_id: str, chunks: list[str], vectors: lis
             conn.execute(
                 """
                 UPDATE knowledge_sources
-                SET status = 'READY', chunk_count = %s, updated_at = now()
+                SET status = 'READY',
+                    chunk_count = %s,
+                    meta = COALESCE(meta, '{}'::jsonb) || %s::jsonb,
+                    updated_at = now()
                 WHERE id = %s AND org_id = %s
                 """,
-                (len(rows), source_id, org_id),
+                (
+                    len(rows),
+                    json.dumps({"embeddingProvider": embedding_fingerprint, "error": None}),
+                    source_id,
+                    org_id,
+                ),
             )
 
 
@@ -311,7 +325,13 @@ def run_ingest(payload: IngestRequest) -> None:
             raise IngestError("nenhum conteudo textual extraido da fonte")
 
         vectors = get_embedding_provider(settings).embed(chunks)
-        _replace_chunks(payload.org_id, payload.source_id, chunks, vectors)
+        _replace_chunks(
+            payload.org_id,
+            payload.source_id,
+            chunks,
+            vectors,
+            embedding_provider_fingerprint(settings),
+        )
         logger.info(
             "ingest concluido: source=%s org=%s chunks=%d",
             payload.source_id,

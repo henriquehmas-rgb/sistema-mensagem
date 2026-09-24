@@ -10,10 +10,11 @@ Dois modos, distinguidos pelo marcador presente no system prompt:
 
 from __future__ import annotations
 
+import re
 import textwrap
 
 from ..handoff import HANDOFF_TOKEN
-from ..textutils import tokenize
+from ..textutils import keyword_overlap, tokenize
 from .base import ChatMessage, ChatProvider
 from .prompts import MEMORY_SUMMARY_START, extract_context_blocks, extract_memory_summary
 
@@ -45,14 +46,21 @@ class MockChat(ChatProvider):
             block_words = tokenize(block)
             common = len(question_words & block_words)
             ratio = common / len(question_words) if question_words else 0.0
-            if (common, ratio) > best_key:
+            if best_block is None or (common, ratio) > best_key:
                 best_key = (common, ratio)
                 best_block = block
 
         common, ratio = best_key
-        if best_block and common >= _MIN_COMMON_WORDS and ratio >= _MIN_OVERLAP_RATIO:
-            snippet = textwrap.shorten(best_block, width=_SNIPPET_WIDTH, placeholder="…")
-            return f"Com base nas informações disponíveis: {snippet}"
+        # Os blocos recebidos aqui já passaram pelo corte de relevância do RAG.
+        # No mock, não há compreensão semântica para fazer uma segunda decisão;
+        # exigir outro overlap criava falsos negativos em flexões e paráfrases.
+        if best_block:
+            snippet = _focused_snippet(question, best_block)
+            if "Nível de conversa: acolhedor" in system:
+                return f"Entendo como isso pode ser desgastante. {snippet}"
+            if "Nível de conversa: passo_a_passo" in system:
+                return f"Vamos por etapas. {snippet}"
+            return snippet
         return f"{HANDOFF_TOKEN} contexto_insuficiente_para_responder"
 
     @staticmethod
@@ -76,3 +84,10 @@ class MockChat(ChatProvider):
         if existing:
             return f"{existing} Novidades: {new_facts}"
         return f"Novidades: {new_facts}"
+
+
+def _focused_snippet(question: str, block: str) -> str:
+    """Retorna a frase mais relacionada, sem despejar o bloco inteiro do RAG."""
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+|\n+", block) if part.strip()]
+    best = max(sentences or [block], key=lambda sentence: keyword_overlap(question, sentence))
+    return textwrap.shorten(best, width=_SNIPPET_WIDTH, placeholder="…")

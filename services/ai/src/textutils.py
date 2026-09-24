@@ -33,11 +33,29 @@ def tokenize(text: str) -> set[str]:
 
 
 def keyword_overlap(query: str, content: str) -> float:
-    """Fracao [0..1] das palavras-chave da query presentes no conteudo."""
+    """Fração das palavras da pergunta cobertas, tolerando flexão pt-BR.
+
+    O prefixo mínimo de cinco caracteres cobre casos como ``atendimento`` /
+    ``atende`` sem transformar palavras curtas e genéricas em equivalentes.
+    """
     query_words = tokenize(query)
     if not query_words:
         return 0.0
-    return len(query_words & tokenize(content)) / len(query_words)
+    content_words = tokenize(content)
+    matches = sum(
+        1
+        for query_word in query_words
+        if any(
+            query_word == content_word
+            or (
+                len(query_word) >= 5
+                and len(content_word) >= 5
+                and query_word[:5] == content_word[:5]
+            )
+            for content_word in content_words
+        )
+    )
+    return matches / len(query_words)
 
 
 def clamp01(value: float) -> float:

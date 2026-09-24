@@ -6,16 +6,18 @@ from fastapi import APIRouter
 
 from .. import retrieval
 from ..schemas import ChunkResult, QueryRequest, QueryResponse
+from ..usage_tracker import usage_scope
 
 router = APIRouter(tags=["knowledge"])
 
 
 @router.post("/query", response_model=QueryResponse)
 def query_knowledge(payload: QueryRequest) -> QueryResponse:
-    chunks = retrieval.search(payload.org_id, payload.query, top_k=payload.top_k)
-    return QueryResponse(
-        chunks=[
-            ChunkResult(content=chunk.content, score=chunk.score, source_id=chunk.source_id)
-            for chunk in chunks
-        ]
-    )
+    with usage_scope(payload.org_id, "knowledge_query"):
+        chunks = retrieval.search(payload.org_id, payload.query, top_k=payload.top_k)
+        return QueryResponse(
+            chunks=[
+                ChunkResult(content=chunk.content, score=chunk.score, source_id=chunk.source_id)
+                for chunk in chunks
+            ]
+        )

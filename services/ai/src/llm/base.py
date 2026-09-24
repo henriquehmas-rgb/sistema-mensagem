@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import TypedDict
 
 
@@ -11,10 +12,21 @@ class ChatMessage(TypedDict):
     content: str
 
 
+@dataclass(frozen=True)
+class UsageSnapshot:
+    model: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    reasoning_tokens: int = 0
+
+
 class ChatProvider(ABC):
     """`generate(messages, system) -> str` — resposta textual do modelo."""
 
     name: str = "base"
+    last_usage: UsageSnapshot | None = None
 
     @abstractmethod
     def generate(self, messages: list[ChatMessage], system: str) -> str:

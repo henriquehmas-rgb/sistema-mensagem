@@ -19,6 +19,7 @@ from ..llm import ChatMessage, get_chat_provider
 from ..llm.executor import generate_with_timeout
 from ..llm.prompts import build_memory_prompt
 from ..schemas import MemoryMessageIn, MemorySummarizeRequest, MemorySummarizeResponse
+from ..usage_tracker import usage_scope
 
 logger = logging.getLogger(__name__)
 
@@ -88,9 +89,9 @@ def _pipeline(payload: MemorySummarizeRequest) -> MemorySummarizeResponse:
     safe_messages = _scrub_sensitive_messages(payload.messages)
     system = build_memory_prompt(existing_summary)
 
-    # (c) LLM (mesmo provider/config de /reply, incluindo mock deterministico)
-    # via o executor COMPARTILHADO com timeout rigido.
-    provider = get_chat_provider()
+    # (c) Tarefa interna: usa o papel auxiliar quando configurado; caso
+    # contrario, herda AI_PROVIDER e preserva o comportamento anterior.
+    provider = get_chat_provider(role="auxiliary")
     try:
         raw_summary = generate_with_timeout(
             provider, safe_messages, system, timeout=get_settings().llm_timeout_seconds
@@ -112,8 +113,9 @@ def _pipeline(payload: MemorySummarizeRequest) -> MemorySummarizeResponse:
 
 @router.post("/memory/summarize", response_model=MemorySummarizeResponse)
 def summarize_memory(payload: MemorySummarizeRequest) -> MemorySummarizeResponse:
-    try:
-        return _pipeline(payload)
-    except Exception:  # noqa: BLE001 — fail-safe absoluto: nunca apaga memoria
-        logger.exception("pipeline /memory/summarize falhou: org=%s", payload.org_id)
-        return MemorySummarizeResponse(summary=payload.existing_summary)
+    with usage_scope(payload.org_id, "memory_summarize"):
+        try:
+            return _pipeline(payload)
+        except Exception:  # noqa: BLE001 — fail-safe absoluto: nunca apaga memoria
+            logger.exception("pipeline /memory/summarize falhou: org=%s", payload.org_id)
+            return MemorySummarizeResponse(summary=payload.existing_summary)

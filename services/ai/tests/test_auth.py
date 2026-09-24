@@ -21,6 +21,8 @@ def test_health_is_public_and_degraded_without_db(client, monkeypatch: pytest.Mo
     body = response.json()
     assert body["status"] == "degraded"
     assert body["provider"] == "mock"
+    assert body["embedding_provider"] == "mock:v1"
+    assert body["production_ready"] is False
     assert body["db"] is False
 
 

@@ -1,0 +1,219 @@
+{
+  "schema_version": 1,
+  "source": "OPA_ABSTRACTED_REPLAY",
+  "historical_only": true,
+  "publish_to_rag": false,
+  "contains_raw_conversations": false,
+  "scenarios": [
+    {
+      "id": "support-los-red-light",
+      "message": "A luz LOS está vermelha e a internet caiu em todos os aparelhos",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-single-device-wifi",
+      "message": "Só meu celular não conecta no Wi-Fi, os outros aparelhos funcionam",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-slow-connection",
+      "message": "A conexão está muito lenta desde ontem",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-app-invalid-credentials",
+      "message": "Não consigo entrar no aplicativo, aparece credenciais inválidas",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-customer-away",
+      "message": "Estou fora de casa e não consigo verificar as luzes do roteador",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-business-phone",
+      "message": "Meu telefone comercial não faz nem recebe chamadas",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-existing-order",
+      "message": "Tem uma ordem de serviço aberta para esse problema?",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-technician-no-show",
+      "message": "O técnico ainda não veio e preciso trabalhar de casa",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-restored",
+      "message": "A internet voltou a funcionar, obrigado",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-generic-outage",
+      "message": "Minha internet não funciona",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-and-billing-conflict",
+      "message": "A internet caiu e também preciso da segunda via da fatura",
+      "expected_route": "billing",
+      "expected_conflict": true
+    },
+    {
+      "id": "support-los-urgent-without-promise",
+      "message": "A luz LOS está piscando e preciso que alguém venha hoje",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-fragmented-abbreviation",
+      "message": "a net caiu em td aqui",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-los-typing-error",
+      "message": "a luz los ta piscano vermelho",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-recurring-instability",
+      "message": "A internet cai toda hora principalmente de noite",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-speed-below-plan",
+      "message": "Minha velocidade está muito abaixo do plano",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-app-login-variation",
+      "message": "Não consigo logar no aplicativo",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-fixed-phone",
+      "message": "Meu telefone fixo não recebe ligação",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-existing-ticket",
+      "message": "Já existe chamado aberto?",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-restart-failed",
+      "message": "Reiniciei e continua sem internet",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-recurrence-frustration",
+      "message": "É a terceira vez que fico sem sinal",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-single-tv",
+      "message": "Só a televisão está sem internet",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-all-devices-offline",
+      "message": "Todos os aparelhos ficaram offline",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-change-wifi-password",
+      "message": "Quero mudar a senha do Wi-Fi",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-modem-on-no-internet",
+      "message": "O modem está ligado, mas continuo sem internet aqui em casa",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-wifi-notebook-only",
+      "message": "O Wi-Fi caiu só no notebook, no celular ainda funciona",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-fiber-no-signal",
+      "message": "Minha fibra está sem sinal desde cedo",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-red-light-returned",
+      "message": "Apareceu uma luz vermelha no aparelho e a conexão parou de novo",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-connection-oscillates",
+      "message": "A conexão oscila muito durante a noite",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-router-already-restarted",
+      "message": "Já reiniciei o roteador e a internet continua ruim",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-check-open-order",
+      "message": "Consegue ver se existe OS em aberto para essa mesma falha?",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-technician-still-missing",
+      "message": "O técnico não veio ainda e sigo sem conexão",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-phone-line-no-dialtone",
+      "message": "Meu telefone não faz ligação nem recebe chamada",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-app-cannot-enter",
+      "message": "Não consigo entrar no aplicativo da SEEG",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    },
+    {
+      "id": "support-wifi-password-loop",
+      "message": "O Wi-Fi pede a senha toda hora e não conecta",
+      "expected_route": "technical_support",
+      "expected_conflict": false
+    }
+  ]
+}

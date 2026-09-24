@@ -16,9 +16,11 @@ from fastapi import APIRouter, Depends, FastAPI, Request
 from . import db
 from .auth import require_service_token
 from .observability import capture_exception, init_sentry
+from .language_variants import refresh_social_variants, start_social_variant_refresh
 from .routes.health import router as health_router
 from .routes.ingest import router as ingest_router
 from .routes.memory import router as memory_router
+from .routes.learning import router as learning_router
 from .routes.query import router as query_router
 from .routes.reply import router as reply_router
 
@@ -60,9 +62,13 @@ def _fail_orphaned_processing_sources() -> None:
 @asynccontextmanager
 async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
     _fail_orphaned_processing_sources()
+    refresh_social_variants()
+    variant_stop, variant_thread = start_social_variant_refresh()
     try:
         yield
     finally:
+        variant_stop.set()
+        variant_thread.join(timeout=1)
         db.close_pool()
 
 
@@ -91,6 +97,7 @@ def create_app() -> FastAPI:
     protected.include_router(query_router)
     protected.include_router(reply_router)
     protected.include_router(memory_router)
+    protected.include_router(learning_router)
     app.include_router(protected)
 
     return app

@@ -78,26 +78,31 @@ _RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
         ),
     ),
     (
-        "cancelamento",
-        re.compile(r"\bcancelar\b|\bcancelamento\b|\bcancela\b|\bcancele\b"),
-    ),
-    (
-        "reclamacao_grave",
+        "risco_seguranca_ou_fraude",
         re.compile(
-            r"\bprocon\b|\breclame\s*aqui\b|\bprocessar\b|\bprocesso\s+judicial\b"
-            r"|\badvogad[oa]s?\b|\binaceitavel\b|\babsurdo\b|\bvergonha\b"
-            r"|\brevoltad[oa]\b|\bindignad[oa]\b|\bpessim[oa]\b"
+            r"\bfraude\b|\bgolpe\b|\binvas[aã]o\b|\bhackead[oa]\b|\bclonad[oa]\b"
+            r"|roubaram\s+(meus?\s+)?dados|acesso\s+nao\s+autorizado"
         ),
     ),
     (
-        "linguagem_ofensiva",
+        "risco_ou_ameaca",
         re.compile(
-            r"\bmerda\b|\bporra\b|\bcaralho\b|\bput[ao]\b|\bfoda[-\s]?se\b"
-            r"|\bfodid[oa]\b|\bdesgraca\b|\bvai\s+se\s+f|\bvsf\b|\bpqp\b|\bfdp\b"
+            r"\bameac[aã]\b|\bameacando\b|\brisco\s+de\s+vida\b|\bemergencia\b"
+            r"|\bincendio\b|fio\s+(pegando\s+)?fogo|poste\s+(caindo|caiu)"
         ),
     ),
-    (SENSITIVE_PAYMENT_DATA_REASON, _PAYMENT_DATA_PATTERN),
-    (SENSITIVE_DOCUMENT_DATA_REASON, _DOCUMENT_DATA_PATTERN),
+    (
+        "commercial_approval_required",
+        re.compile(
+            r"(consegue|conseguem|tem|teria|dar|conceder|aplicar|oferecer|fazer|faz)\s+(um\s+)?descont(?:o|inho|ao)\b"
+            r"|descont(?:o|inho|ao)\b\s*(maior|especial|personalizado|pra mim|para mim)?"
+            r"|proposta\s+(comercial\s+)?(personalizada|especial|diferente)"
+            r"|condicao\s+(comercial\s+)?especial"
+            r"|(negociar|reduzir|reduzidinh\w*|abaixar|melhorar)\s+(o\s+)?(preco|valor|mensalidade)"
+            r"|reduzidinh\w*\s+(?:no\s+)?(?:preco|valor|mensalidade)"
+            r"|faz(er)?\s+por\s+r\$"
+        ),
+    ),
 )
 
 
