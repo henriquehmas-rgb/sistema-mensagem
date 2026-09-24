@@ -13,6 +13,8 @@ function normalizeMetrics(raw: Partial<DashboardMetricsDto> | undefined): Dashbo
     byStage: raw?.byStage ?? [],
     byChannel: raw?.byChannel ?? [],
     byAgent: raw?.byAgent ?? [],
+    ...(raw?.supportPilot !== undefined ? { supportPilot: raw.supportPilot } : {}),
+    ...(raw?.operationalReadiness !== undefined ? { operationalReadiness: raw.operationalReadiness } : {}),
   };
 }
 

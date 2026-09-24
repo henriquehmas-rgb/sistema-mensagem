@@ -18,6 +18,7 @@ import {
   createContact,
   getContact,
   listContacts,
+  mergeContacts,
   type ContactListFilters,
   type CreateContactInput,
 } from "./api";
@@ -76,6 +77,21 @@ export function useUpdateContactProfile() {
       queryClient.setQueryData(contactsKeys.detail(contact.id), contact);
       patchContactInCaches(queryClient, contact);
       void queryClient.invalidateQueries({ queryKey: contactsKeys.lists });
+    },
+    onError: (error) => toast.error(errorMessageOf(error)),
+  });
+}
+
+export function useMergeContacts() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ targetContactId, sourceContactId }: { targetContactId: string; sourceContactId: string }) =>
+      mergeContacts(targetContactId, sourceContactId),
+    onSuccess: (contact: ContactDto) => {
+      queryClient.setQueryData(contactsKeys.detail(contact.id), contact);
+      patchContactInCaches(queryClient, contact);
+      void queryClient.invalidateQueries({ queryKey: contactsKeys.all });
+      toast.success("Registros unificados. O histórico agora está no contato principal.");
     },
     onError: (error) => toast.error(errorMessageOf(error)),
   });

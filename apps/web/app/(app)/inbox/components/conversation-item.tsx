@@ -25,6 +25,11 @@ function ConversationItemInner({ conversation, active, onSelect }: ConversationI
   const contactTyping = typing?.isTyping === true && typing.contactId !== undefined;
 
   const hasUnread = conversation.unreadCount > 0;
+  const attentionLabel = !conversation.assigneeId && conversation.status !== "RESOLVED"
+    ? !conversation.aiEnabled
+      ? "Aguardando atendimento humano"
+      : null
+    : null;
 
   return (
     <button
@@ -118,6 +123,9 @@ function ConversationItemInner({ conversation, active, onSelect }: ConversationI
             ) : null}
           </span>
         </div>
+        {attentionLabel ? (
+          <p className="mt-1 truncate text-[10px] font-medium text-warning">{attentionLabel}</p>
+        ) : null}
       </div>
     </button>
   );

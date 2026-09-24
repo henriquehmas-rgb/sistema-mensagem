@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Brain, Check, Loader2, Plus, Tag as TagIcon, X } from "lucide-react";
+import { Brain, Check, Database, Loader2, Plus, Search, Tag as TagIcon, X } from "lucide-react";
 
 import type { ConversationDto } from "@sm/shared";
 
@@ -28,16 +28,27 @@ import {
   useContactConversations,
   useConversationTags,
   useCreateTag,
+  useIxcCustomerDetails,
+  useIxcCustomerLookup,
   useStages,
   useTags,
   useUpdateContact,
 } from "@/lib/inbox/hooks";
+import { useAuthStore } from "@/lib/stores/auth";
 import { formatFullDate, formatRelativeLong, formatRelativeShort } from "@/lib/inbox/utils";
 import { cn } from "@/lib/utils";
 
 import { CHANNEL_LABELS, ChannelIcon } from "./channel-icons";
 
 const AUTOSAVE_DEBOUNCE_MS = 800;
+
+const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+
+function compactDate(value: string | null): string {
+  if (!value) return "Não informado";
+  const date = new Date(value.replace(" ", "T"));
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("pt-BR");
+}
 
 const TAG_COLOR_PALETTE = [
   "#6366F1",
@@ -65,6 +76,14 @@ const STATUS_LABELS: Record<ConversationDto["status"], string> = {
   SNOOZED: "Adiada",
 };
 
+const INTENT_LABELS: Record<string, string> = {
+  general_support: "Atendimento geral",
+  technical_support: "Suporte técnico",
+  billing: "Financeiro",
+  sales: "Vendas",
+  cancellation: "Cancelamento",
+};
+
 type SaveState = "idle" | "saving" | "saved";
 
 interface ContactDraft {
@@ -88,6 +107,10 @@ export function CrmPanel({ conversation, onSelectConversation }: CrmPanelProps) 
   const conversationTags = useConversationTags(conversation.id);
   const updateContact = useUpdateContact();
   const otherConversationsQuery = useContactConversations(contact.id);
+  const ixcLookup = useIxcCustomerLookup();
+  const ixcDetails = useIxcCustomerDetails();
+  const user = useAuthStore((state) => state.user);
+  const canSeeInvoices = user?.role === "ADMIN" || user?.role === "SUPERVISOR";
 
   // -------------------------------------------------------------------------
   // Dados do contato — edição inline com autosave (debounce)
@@ -110,6 +133,8 @@ export function CrmPanel({ conversation, onSelectConversation }: CrmPanelProps) 
       notes: contact.notes ?? "",
     });
     setSaveState("idle");
+    ixcLookup.reset();
+    ixcDetails.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset apenas por contato
   }, [contact.id]);
 
@@ -337,9 +362,40 @@ export function CrmPanel({ conversation, onSelectConversation }: CrmPanelProps) 
           </h3>
           <dl className="space-y-2 text-xs">
             <div className="flex items-center justify-between gap-2">
+              <dt className="text-muted-foreground">Protocolo</dt>
+              <dd className="font-mono text-[11px] font-semibold">{conversation.protocol}</dd>
+            </div>
+            <div className="flex items-center justify-between gap-2">
               <dt className="text-muted-foreground">Status</dt>
               <dd className="font-medium">{STATUS_LABELS[conversation.status]}</dd>
             </div>
+            <div className="flex items-center justify-between gap-2">
+              <dt className="text-muted-foreground">Departamento</dt>
+              <dd className="font-medium">
+                {conversation.department ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span
+                      className="h-1.5 w-1.5 rounded-full"
+                      style={{ backgroundColor: conversation.department.color }}
+                    />
+                    {conversation.department.name}
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground">Não definido</span>
+                )}
+              </dd>
+            </div>
+            {conversation.lastIntent ? (
+              <div className="flex items-center justify-between gap-2">
+                <dt className="text-muted-foreground">Intenção</dt>
+                <dd className="font-medium" title={conversation.lastIntent}>
+                  {INTENT_LABELS[conversation.lastIntent] ?? conversation.lastIntent}
+                  {conversation.triageConfidence !== null
+                    ? ` · ${Math.round(conversation.triageConfidence * 100)}%`
+                    : ""}
+                </dd>
+              </div>
+            ) : null}
             <div className="flex items-center justify-between gap-2">
               <dt className="text-muted-foreground">Etapa</dt>
               <dd>
@@ -392,7 +448,144 @@ export function CrmPanel({ conversation, onSelectConversation }: CrmPanelProps) 
               <dt className="text-muted-foreground">Criada em</dt>
               <dd className="font-medium">{formatFullDate(conversation.createdAt)}</dd>
             </div>
+            {conversation.status === "RESOLVED" ? (
+              <>
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="text-muted-foreground">Motivo</dt>
+                  <dd className="max-w-40 truncate font-medium">
+                    {conversation.resolutionReason?.name ?? "Não informado"}
+                  </dd>
+                </div>
+                {conversation.resolvedAt ? (
+                  <div className="flex items-center justify-between gap-2">
+                    <dt className="text-muted-foreground">Resolvida em</dt>
+                    <dd className="font-medium">{formatFullDate(conversation.resolvedAt)}</dd>
+                  </div>
+                ) : null}
+              </>
+            ) : null}
           </dl>
+        </div>
+
+        <Separator />
+
+        {/* IXC — consulta manual para não transmitir dados sem ação do atendente */}
+        <div className="space-y-2.5 p-4">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <Database className="h-3.5 w-3.5" /> Cliente IXC
+            </h3>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-[11px]"
+              disabled={!contact.phone || ixcLookup.isPending}
+              onClick={() => contact.phone && ixcLookup.mutate(contact.phone)}
+            >
+              {ixcLookup.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Search className="h-3 w-3" />}
+              Consultar
+            </Button>
+          </div>
+          {!contact.phone ? (
+            <p className="text-xs text-muted-foreground">Cadastre um telefone para pesquisar no IXC.</p>
+          ) : ixcLookup.data ? (
+            ixcLookup.data.length === 0 ? (
+              <p className="rounded-md border bg-muted/30 p-2.5 text-xs text-muted-foreground">Nenhum cliente correspondente encontrado.</p>
+            ) : (
+              <div className="space-y-2">
+                {ixcLookup.data.map((customer) => (
+                  <div key={customer.id} className="rounded-md border bg-muted/20 p-2.5 text-xs">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="font-semibold">{customer.name}</span>
+                      <span className={cn("rounded-full px-1.5 py-0.5 text-[10px]", customer.active === true ? "bg-success/15 text-success" : customer.active === false ? "bg-destructive/15 text-destructive" : "bg-muted text-muted-foreground")}>
+                        {customer.active === true ? "Ativo" : customer.active === false ? "Inativo" : "Status desconhecido"}
+                      </span>
+                    </div>
+                    <dl className="mt-1.5 space-y-1 text-[11px]">
+                      <div className="flex justify-between gap-2"><dt className="text-muted-foreground">ID IXC</dt><dd className="font-mono">{customer.id}</dd></div>
+                      {customer.cpfCnpj ? <div className="flex justify-between gap-2"><dt className="text-muted-foreground">CPF/CNPJ</dt><dd>{customer.cpfCnpj}</dd></div> : null}
+                      {customer.email ? <div className="flex justify-between gap-2"><dt className="text-muted-foreground">E-mail</dt><dd className="max-w-40 truncate">{customer.email}</dd></div> : null}
+                    </dl>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="mt-2 h-7 w-full text-[11px]"
+                      disabled={ixcDetails.isPending}
+                      onClick={() =>
+                        ixcDetails.mutate({ customerId: customer.id, conversationId: conversation.id, includeInvoices: canSeeInvoices })
+                      }
+                    >
+                      {ixcDetails.isPending && ixcDetails.variables?.customerId === customer.id ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Database className="h-3 w-3" />
+                      )}
+                      Ver contratos e suporte
+                    </Button>
+                    {ixcDetails.data?.customerId === customer.id ? (
+                      <div className="mt-2 space-y-2 border-t pt-2 text-[11px]">
+                        <div>
+                          <p className="font-semibold">Contratos ({ixcDetails.data.contracts.length})</p>
+                          {ixcDetails.data.contracts.length === 0 ? (
+                            <p className="text-muted-foreground">Nenhum contrato encontrado.</p>
+                          ) : (
+                            ixcDetails.data.contracts.slice(0, 3).map((contract) => (
+                              <p key={contract.id} className="text-muted-foreground">
+                                #{contract.id} · {contract.planDescription ?? "Plano não informado"} · {contract.internetStatus ?? contract.status ?? "Sem status"}
+                              </p>
+                            ))
+                          )}
+                        </div>
+                        <div>
+                          <p className="font-semibold">Conexões ({ixcDetails.data.connections.length})</p>
+                          {ixcDetails.data.connections.length === 0 ? (
+                            <p className="text-muted-foreground">Nenhuma conexão encontrada.</p>
+                          ) : (
+                            ixcDetails.data.connections.slice(0, 3).map((connection) => (
+                              <p key={connection.id} className="text-muted-foreground">
+                                Contrato {connection.contractId ?? "—"} · {connection.online === true ? "Online" : connection.online === false ? "Offline" : connection.connectionState ?? "Estado desconhecido"}
+                              </p>
+                            ))
+                          )}
+                        </div>
+                        <div>
+                          <p className="font-semibold">Ordens de serviço ({ixcDetails.data.serviceOrders.length})</p>
+                          {ixcDetails.data.serviceOrders.length === 0 ? (
+                            <p className="text-muted-foreground">Nenhuma OS encontrada.</p>
+                          ) : (
+                            ixcDetails.data.serviceOrders.slice(0, 3).map((order) => (
+                              <p key={order.id} className="text-muted-foreground">
+                                #{order.protocol ?? order.id} · {order.status ?? "Sem status"} · {compactDate(order.openedAt)}
+                              </p>
+                            ))
+                          )}
+                        </div>
+                        {ixcDetails.data.invoices ? (
+                          <div>
+                            <p className="font-semibold">Faturas ({ixcDetails.data.invoices.length})</p>
+                            {ixcDetails.data.invoices.length === 0 ? (
+                              <p className="text-muted-foreground">Nenhuma fatura encontrada.</p>
+                            ) : (
+                              ixcDetails.data.invoices.slice(0, 3).map((invoice) => (
+                                <p key={invoice.id} className="text-muted-foreground">
+                                  {compactDate(invoice.dueDate)} · {invoice.openAmount === null ? "Valor não informado" : money.format(invoice.openAmount)} · {invoice.status ?? "Sem status"}
+                                </p>
+                              ))
+                            )}
+                          </div>
+                        ) : null}
+                        <p className="text-[10px] text-muted-foreground">
+                          Consulta somente leitura. Senhas, IP, MAC, Wi‑Fi, boleto e Pix não são exibidos.
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )
+          ) : (
+            <p className="text-xs text-muted-foreground">A consulta é manual e somente leitura.</p>
+          )}
         </div>
 
         <Separator />

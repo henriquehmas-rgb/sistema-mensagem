@@ -48,7 +48,7 @@ export function InboxClient() {
   const activeConversation = activeConversationQuery.data ?? null;
 
   return (
-    <div className="flex h-dvh min-w-0 flex-1 overflow-hidden">
+    <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
       <ConversationList
         filters={filters}
         onFiltersChange={handleFiltersChange}

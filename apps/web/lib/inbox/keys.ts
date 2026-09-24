@@ -5,6 +5,7 @@ import type { ConversationFilters } from "./types";
  * e tagIds ordenadas, para que filtros equivalentes compartilhem cache.
  */
 export interface NormalizedFilters {
+  attention: boolean;
   status: ConversationFilters["status"];
   q: string;
   channelType: ConversationFilters["channelType"];
@@ -15,6 +16,7 @@ export interface NormalizedFilters {
 
 export function normalizeFilters(filters: ConversationFilters): NormalizedFilters {
   return {
+    attention: filters.attention,
     status: filters.status,
     q: filters.q.trim(),
     channelType: filters.channelType,
@@ -42,6 +44,8 @@ export const inboxKeys = {
   contactConversationsAll: ["conversations", "by-contact"] as const,
   messages: (conversationId: string) => ["messages", conversationId] as const,
   agents: ["users", "agents"] as const,
+  departments: ["departments"] as const,
   stages: ["stages"] as const,
   tags: ["tags"] as const,
+  resolutionReasons: ["resolution-reasons"] as const,
 };

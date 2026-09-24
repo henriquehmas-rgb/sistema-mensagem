@@ -11,6 +11,7 @@ export const UNASSIGNED = "unassigned";
 
 /** Filtros da lista de conversas (docs/CONTRACTS.md §6 — GET /conversations). */
 export interface ConversationFilters {
+  attention: boolean;
   status: StatusTab;
   q: string;
   channelType: ChannelType | null;
@@ -21,6 +22,7 @@ export interface ConversationFilters {
 }
 
 export const DEFAULT_FILTERS: ConversationFilters = {
+  attention: false,
   status: "OPEN",
   q: "",
   channelType: null,
@@ -37,6 +39,7 @@ export interface MessagesPage {
 
 /** Contadores das abas de status (respeitam busca + filtros ativos). */
 export interface ConversationCounts {
+  attention: number;
   open: number;
   pending: number;
   resolved: number;

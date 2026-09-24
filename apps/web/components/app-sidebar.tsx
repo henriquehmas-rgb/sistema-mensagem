@@ -11,6 +11,9 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
+  ShieldCheck,
+  BookOpenCheck,
+  ScrollText,
   SquareKanban,
   Users,
   type LucideIcon,
@@ -45,6 +48,7 @@ interface NavItem {
   href: string;
   label: string;
   icon: LucideIcon;
+  roles?: readonly Role[];
 }
 
 const NAV_ITEMS: readonly NavItem[] = [
@@ -52,6 +56,24 @@ const NAV_ITEMS: readonly NavItem[] = [
   { href: "/kanban", label: "Kanban", icon: SquareKanban },
   { href: "/contacts", label: "Contatos", icon: Users },
   { href: "/dashboard", label: "Dashboard", icon: BarChart3 },
+  {
+    href: "/directives",
+    label: "Diretrizes",
+    icon: ScrollText,
+    roles: ["ADMIN", "SUPERVISOR"],
+  },
+  {
+    href: "/protocols",
+    label: "Protocolos",
+    icon: BookOpenCheck,
+    roles: ["ADMIN", "SUPERVISOR"],
+  },
+  {
+    href: "/approvals",
+    label: "Aprovações",
+    icon: ShieldCheck,
+    roles: ["ADMIN", "SUPERVISOR"],
+  },
   { href: "/settings", label: "Configurações", icon: Settings },
 ] as const;
 
@@ -132,7 +154,7 @@ export function AppSidebar() {
   return (
     <aside
       className={cn(
-        "flex h-dvh shrink-0 flex-col border-r bg-card transition-[width] duration-200 ease-in-out",
+        "flex h-full shrink-0 flex-col border-r bg-card transition-[width] duration-200 ease-in-out",
         collapsed ? "w-[68px]" : "w-64",
       )}
     >
@@ -177,7 +199,7 @@ export function AppSidebar() {
 
       {/* Navegação */}
       <nav className="flex-1 space-y-1 overflow-y-auto p-2">
-        {NAV_ITEMS.map((item) => {
+        {NAV_ITEMS.filter((item) => !item.roles || (user && item.roles.includes(user.role))).map((item) => {
           const isActive =
             pathname === item.href || pathname.startsWith(`${item.href}/`);
           const link = (

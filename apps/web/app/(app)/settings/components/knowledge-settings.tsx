@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { format } from "date-fns";
-import { BookOpenText, Link2, Loader2, Plus, Trash2, Type } from "lucide-react";
+import { BookOpenText, BrainCircuit, Check, Link2, Loader2, Plus, Trash2, TrendingUp, Type, X } from "lucide-react";
 
 import type { IngestStatus, SourceType } from "@sm/shared";
 
@@ -31,7 +31,12 @@ import {
   useCreateKnowledgeSource,
   useDeleteKnowledgeSource,
   useKnowledgeSources,
+  useLearningCandidates,
+  useLearningPatterns,
+  useApproveLearningCandidate,
+  useRejectLearningCandidate,
 } from "@/lib/settings/hooks";
+import { useAuthStore } from "@/lib/stores/auth";
 import { cn } from "@/lib/utils";
 
 const STATUS_META: Record<
@@ -54,9 +59,15 @@ const TYPE_LABELS: Record<SourceType, string> = {
 type AddMode = "url" | "text";
 
 export function KnowledgeSettings() {
+  const role = useAuthStore((state) => state.user?.role);
+  const canReview = role === "ADMIN" || role === "SUPERVISOR";
   const sourcesQuery = useKnowledgeSources();
+  const candidatesQuery = useLearningCandidates(canReview);
+  const patternsQuery = useLearningPatterns(canReview);
   const createSource = useCreateKnowledgeSource();
   const deleteSource = useDeleteKnowledgeSource();
+  const approveCandidate = useApproveLearningCandidate();
+  const rejectCandidate = useRejectLearningCandidate();
 
   const [mode, setMode] = useState<AddMode>("url");
   const [name, setName] = useState("");
@@ -65,6 +76,9 @@ export function KnowledgeSettings() {
   const [textType, setTextType] = useState<Extract<SourceType, "TEXT" | "TABLE">>("TEXT");
 
   const sources = sourcesQuery.data ?? [];
+  const pendingCandidates = (candidatesQuery.data ?? []).filter(
+    (candidate) => candidate.status === "PENDING",
+  );
 
   const canSubmit =
     name.trim().length > 0 &&
@@ -102,10 +116,100 @@ export function KnowledgeSettings() {
           <p className="mt-1">
             Cada fonte é dividida em trechos e indexada com embeddings vetoriais.
             Ao responder um cliente, a IA busca os trechos mais relevantes e responde
-            somente com base neles — se não encontrar, transfere para um atendente.
+            com base neles. Quando ainda existir uma lacuna real, ela consulta o responsável
+            internamente e depois continua o atendimento com o cliente.
           </p>
         </div>
       </div>
+
+      {canReview ? (
+        <section className="space-y-3 rounded-xl border bg-card p-4">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-primary" />
+            <h3 className="text-sm font-semibold">Padrões recentes de atendimento</h3>
+          </div>
+          {patternsQuery.isLoading ? (
+            <Skeleton className="h-24 w-full" />
+          ) : (patternsQuery.data ?? []).length === 0 ? (
+            <p className="text-xs text-muted-foreground">Ainda não há recorrência suficiente para análise.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader><TableRow><TableHead>Assunto</TableHead><TableHead className="text-right">7 dias</TableHead><TableHead className="text-right">30 dias</TableHead><TableHead className="text-right">90 dias</TableHead><TableHead className="text-right">Tendência</TableHead></TableRow></TableHeader>
+                <TableBody>
+                  {(patternsQuery.data ?? []).slice(0, 10).map((pattern) => (
+                    <TableRow key={pattern.fingerprint}>
+                      <TableCell><span className="line-clamp-2 max-w-md text-xs">{pattern.sample.split("\n")[0]}</span></TableCell>
+                      <TableCell className="text-right tabular-nums">{pattern.occurrences7d}</TableCell>
+                      <TableCell className="text-right tabular-nums">{pattern.occurrences30d}</TableCell>
+                      <TableCell className="text-right tabular-nums">{pattern.occurrences90d}</TableCell>
+                      <TableCell className="text-right"><Badge variant={pattern.growthPercent !== null && pattern.growthPercent > 0 ? "warning" : "secondary"}>{pattern.growthPercent === null ? "—" : `${pattern.growthPercent > 0 ? "+" : ""}${pattern.growthPercent}%`}</Badge></TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </section>
+      ) : null}
+
+      {canReview ? (
+        <section className="space-y-3 rounded-xl border bg-card p-4">
+          <div className="flex items-start gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+              <BrainCircuit className="h-5 w-5 text-primary" />
+            </span>
+            <div>
+              <h3 className="text-sm font-semibold">Aprendizado supervisionado</h3>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                Toda solução humana é sanitizada e registrada automaticamente. Apenas
+                orientação técnica segura pode ter uso provisório; todos os aprendizados
+                passam pela revisão humana semanal antes de se tornarem conteúdo definitivo.
+              </p>
+            </div>
+          </div>
+
+          {candidatesQuery.isLoading ? (
+            <Skeleton className="h-20 w-full" />
+          ) : pendingCandidates.length === 0 ? (
+            <p className="rounded-lg bg-muted/40 px-3 py-4 text-center text-xs text-muted-foreground">
+              Nenhuma solução humana aguardando revisão.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {pendingCandidates.map((candidate) => {
+                const busy = approveCandidate.isPending || rejectCandidate.isPending;
+                return (
+                  <article key={candidate.id} className="rounded-lg border p-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <Badge variant="secondary">{candidate.intent ?? "geral"}</Badge>
+                      <Badge variant="outline">qualidade {Math.round(candidate.qualityScore * 100)}%</Badge>
+                      {candidate.recurrenceCount > 1 ? (
+                        <Badge variant="warning">{candidate.recurrenceCount} ocorrências</Badge>
+                      ) : null}
+                      {candidate.autoPublishedAt ? (
+                        <Badge variant="warning">uso provisório</Badge>
+                      ) : null}
+                      <span className="text-[11px] text-muted-foreground">
+                        {format(new Date(candidate.createdAt), "dd/MM/yyyy")}
+                      </span>
+                    </div>
+                    <p className="whitespace-pre-wrap text-xs leading-relaxed">{candidate.content}</p>
+                    <div className="mt-3 flex justify-end gap-2">
+                      <Button variant="outline" size="sm" disabled={busy} onClick={() => rejectCandidate.mutate(candidate.id)}>
+                        <X className="mr-1.5 h-3.5 w-3.5" /> Remover
+                      </Button>
+                      <Button size="sm" disabled={busy} onClick={() => approveCandidate.mutate(candidate.id)}>
+                        <Check className="mr-1.5 h-3.5 w-3.5" /> Confirmar
+                      </Button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      ) : null}
 
       {/* Adicionar fonte */}
       <form onSubmit={handleSubmit} className="space-y-3 rounded-lg border border-dashed p-4">

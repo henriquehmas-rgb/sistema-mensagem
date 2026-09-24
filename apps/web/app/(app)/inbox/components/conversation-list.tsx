@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bell, BellOff, Loader2, Search, X } from "lucide-react";
+import { Bell, BellOff, CircleAlert, Loader2, Search, X } from "lucide-react";
 
 import type { ConversationDto } from "@sm/shared";
 
@@ -317,7 +317,7 @@ export function ConversationList({
 
         <Tabs
           value={filters.status}
-          onValueChange={(value) => onFiltersChange({ status: value as StatusTab })}
+          onValueChange={(value) => onFiltersChange({ status: value as StatusTab, attention: false })}
         >
           <TabsList className="grid h-8 w-full grid-cols-4 p-0.5">
             {STATUS_TABS.map((tab) => {
@@ -346,6 +346,23 @@ export function ConversationList({
             })}
           </TabsList>
         </Tabs>
+
+        <Button
+          type="button"
+          variant={filters.attention ? "default" : "outline"}
+          size="sm"
+          className="h-8 w-full justify-between"
+          onClick={() => onFiltersChange({ attention: !filters.attention })}
+          aria-pressed={filters.attention}
+        >
+          <span className="flex items-center gap-2">
+            <CircleAlert className="h-4 w-4" />
+            Precisa de atenção
+          </span>
+          {counts && counts.attention > 0 ? (
+            <span className={cn("rounded-full px-1.5 text-[10px] font-semibold", filters.attention ? "bg-background/20" : "bg-warning/15 text-warning")}>{counts.attention > 99 ? "99+" : counts.attention}</span>
+          ) : null}
+        </Button>
 
         {chips.length > 0 ? (
           <div className="flex flex-wrap gap-1.5">

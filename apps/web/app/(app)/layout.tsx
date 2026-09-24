@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { MessageSquare } from "lucide-react";
 
 import { AppSidebar } from "@/components/app-sidebar";
+import { AiBudgetAlert } from "@/components/ai-budget-alert";
+import { KnowledgeGapPopup } from "@/components/knowledge-gap-popup";
 import { useRealtimeHandlers } from "@/lib/realtime-handlers";
 import { useAuthStore } from "@/lib/stores/auth";
 
@@ -51,11 +53,13 @@ export default function AppLayout({
   }
 
   return (
-    <div className="flex min-h-dvh bg-background">
+    <div className="flex h-dvh overflow-hidden bg-background">
       <AppSidebar />
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <main className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <AiBudgetAlert />
         {children}
       </main>
+      <KnowledgeGapPopup />
     </div>
   );
 }

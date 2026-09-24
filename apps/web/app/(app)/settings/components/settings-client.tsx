@@ -4,8 +4,10 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   BookOpenText,
+  ClipboardCheck,
   Layers,
   Radio,
+  ServerCog,
   Tags,
   Users,
   Workflow,
@@ -18,16 +20,22 @@ import { useAuthStore } from "@/lib/stores/auth";
 import { AutomationsSettings } from "./automations-settings";
 import { ChannelsSettings } from "./channels-settings";
 import { KnowledgeSettings } from "./knowledge-settings";
+import { IxcSettings } from "./ixc-settings";
+import { OlhoDeDeusSettings } from "./olho-de-deus-settings";
 import { StagesSettings } from "./stages-settings";
 import { TagsSettings } from "./tags-settings";
 import { UsersSettings } from "./users-settings";
+import { FollowUpSettings } from "./follow-up-settings";
 
 type SettingsTab =
   | "stages"
   | "tags"
   | "users"
   | "channels"
+  | "ixc"
+  | "olho-de-deus"
   | "knowledge"
+  | "follow-up"
   | "automations";
 
 interface TabDef {
@@ -42,7 +50,10 @@ const TAB_DEFS: readonly TabDef[] = [
   { value: "tags", label: "Tags", icon: Tags },
   { value: "users", label: "Usuários", icon: Users, adminOnly: true },
   { value: "channels", label: "Canais", icon: Radio },
+  { value: "ixc", label: "IXC", icon: ServerCog, adminOnly: true },
+  { value: "olho-de-deus", label: "Olho de Deus", icon: ServerCog, adminOnly: true },
   { value: "knowledge", label: "Base de Conhecimento", icon: BookOpenText },
+  { value: "follow-up", label: "Follow-up", icon: ClipboardCheck, adminOnly: true },
   { value: "automations", label: "Automações", icon: Workflow },
 ] as const;
 
@@ -53,7 +64,6 @@ function isSettingsTab(value: string | null): value is SettingsTab {
 export function SettingsClient() {
   const searchParams = useSearchParams();
   const isAdmin = useAuthStore((state) => state.user?.role === "ADMIN");
-
   const visibleTabs = TAB_DEFS.filter((tab) => !tab.adminOnly || isAdmin);
 
   const [tab, setTab] = useState<SettingsTab>("stages");
@@ -98,9 +108,24 @@ export function SettingsClient() {
           <TabsContent value="channels" className="mt-5">
             <ChannelsSettings />
           </TabsContent>
+          {isAdmin ? (
+            <TabsContent value="ixc" className="mt-5">
+              <IxcSettings />
+            </TabsContent>
+          ) : null}
+          {isAdmin ? (
+            <TabsContent value="olho-de-deus" className="mt-5">
+              <OlhoDeDeusSettings />
+            </TabsContent>
+          ) : null}
           <TabsContent value="knowledge" className="mt-5">
             <KnowledgeSettings />
           </TabsContent>
+          {isAdmin ? (
+            <TabsContent value="follow-up" className="mt-5">
+              <FollowUpSettings />
+            </TabsContent>
+          ) : null}
           <TabsContent value="automations" className="mt-5">
             <AutomationsSettings />
           </TabsContent>

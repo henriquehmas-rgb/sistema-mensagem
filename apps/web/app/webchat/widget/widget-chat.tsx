@@ -76,6 +76,11 @@ interface SessionInfo {
   orgName: string;
 }
 
+interface VisitorProfile {
+  name: string;
+  phone: string;
+}
+
 const API_BASE = "/api/webchat";
 const SOCKET_NAMESPACE = "/webchat";
 const TEMP_PREFIX = "tmp-";
@@ -201,10 +206,36 @@ function prettifySlug(slug: string): string {
     .join(" ");
 }
 
+/** O widget é da SEEG/Brasil: aceita número local e o envia em E.164. */
+function normalizeBrazilPhone(value: string): string | null {
+  const digits = value.replace(/\D/g, "");
+  const international = digits.startsWith("55")
+    ? digits
+    : digits.length === 10 || digits.length === 11
+      ? `55${digits}`
+      : "";
+  return /^55\d{10,11}$/.test(international) ? `+${international}` : null;
+}
+
+/**
+ * Mantém a mesma ordem canônica usada pela API: createdAt e, em empate, id.
+ * Socket e polling podem entregar o mesmo conjunto de eventos em instantes
+ * diferentes; a interface nunca deve transformar essa corrida em inversão de
+ * fala entre visitante e assistente.
+ */
+function sortMessagesChronologically(messages: MessageDto[]): MessageDto[] {
+  return [...messages].sort((left, right) => {
+    const delta = new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+    return delta !== 0 ? delta : left.id.localeCompare(right.id);
+  });
+}
+
 /** Insere/atualiza uma mensagem vinda do servidor, reconciliando otimistas. */
 function mergeServerMessage(list: MessageDto[], incoming: MessageDto): MessageDto[] {
   if (list.some((m) => m.id === incoming.id)) {
-    return list.map((m) => (m.id === incoming.id ? incoming : m));
+    return sortMessagesChronologically(
+      list.map((m) => (m.id === incoming.id ? incoming : m)),
+    );
   }
   if (incoming.direction === "INBOUND" && isTextContent(incoming.content)) {
     const text = incoming.content.text;
@@ -218,10 +249,10 @@ function mergeServerMessage(list: MessageDto[], incoming: MessageDto): MessageDt
     if (tempIndex >= 0) {
       const next = [...list];
       next[tempIndex] = incoming;
-      return next;
+      return sortMessagesChronologically(next);
     }
   }
-  return [...list, incoming];
+  return sortMessagesChronologically([...list, incoming]);
 }
 
 // ---------------------------------------------------------------------------
@@ -397,6 +428,8 @@ export function WidgetChat({ org, parentOrigin }: { org: string; parentOrigin: s
   const [status, setStatus] = useState<WidgetStatus>("loading");
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [messages, setMessages] = useState<MessageDto[]>([]);
+  const [profile, setProfile] = useState<VisitorProfile>({ name: "", phone: "" });
+  const [profileError, setProfileError] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [socketConnected, setSocketConnected] = useState(false);
@@ -410,6 +443,7 @@ export function WidgetChat({ org, parentOrigin }: { org: string; parentOrigin: s
   const sessionRef = useRef<SessionInfo | null>(null);
   const sessionTokenRef = useRef<string | null>(null);
   const sessionPromiseRef = useRef<Promise<SessionInfo> | null>(null);
+  const profileRef = useRef<VisitorProfile>({ name: "", phone: "" });
   const bootstrappedRef = useRef(false);
   const openRef = useRef(false);
   const mutedRef = useRef(false);
@@ -528,6 +562,10 @@ export function WidgetChat({ org, parentOrigin }: { org: string; parentOrigin: s
   }, [session]);
 
   useEffect(() => {
+    profileRef.current = profile;
+  }, [profile]);
+
+  useEffect(() => {
     mutedRef.current = muted;
   }, [muted]);
 
@@ -561,7 +599,7 @@ export function WidgetChat({ org, parentOrigin }: { org: string; parentOrigin: s
         { token: active.visitorToken },
       );
       setSession(active);
-      setMessages(res.data);
+      setMessages(sortMessagesChronologically(res.data));
       setStatus("ready");
     } catch (error) {
       if (error instanceof HttpError && (error.status === 401 || error.status === 404)) {
@@ -579,10 +617,15 @@ export function WidgetChat({ org, parentOrigin }: { org: string; parentOrigin: s
   const ensureSession = useCallback(async (): Promise<SessionInfo> => {
     const existing = sessionRef.current;
     if (existing) return existing;
+    const visitorName = profileRef.current.name.trim();
+    const visitorPhone = normalizeBrazilPhone(profileRef.current.phone);
+    if (!visitorName || !visitorPhone) {
+      throw new HttpError(400);
+    }
     sessionPromiseRef.current ??= (async () => {
       const created = await requestJson<SessionInfo>(`${API_BASE}/session`, {
         method: "POST",
-        body: { orgSlug: org },
+        body: { orgSlug: org, name: visitorName, phone: visitorPhone },
       });
       const active: SessionInfo = {
         visitorToken: created.visitorToken,
@@ -719,7 +762,7 @@ export function WidgetChat({ org, parentOrigin }: { org: string; parentOrigin: s
       };
       setMessages((prev) => {
         const withoutTemp = prev.filter((m) => m.id !== tempId);
-        return [...withoutTemp, optimistic];
+        return sortMessagesChronologically([...withoutTemp, optimistic]);
       });
 
       try {
@@ -847,9 +890,58 @@ export function WidgetChat({ org, parentOrigin }: { org: string; parentOrigin: s
     });
   }, [org]);
 
+  const startNewConversation = useCallback(() => {
+    // Remove apenas o vínculo local. A conversa anterior permanece íntegra no
+    // servidor/inbox; uma nova sessão será criada no primeiro envio seguinte.
+    socketRef.current?.disconnect();
+    socketRef.current = null;
+    writeStoredSession(org, null);
+    sessionRef.current = null;
+    sessionTokenRef.current = null;
+    sessionPromiseRef.current = null;
+    lastServerIdRef.current = null;
+    unreadRef.current = 0;
+    setSession(null);
+    setMessages([]);
+    setInput("");
+    setAgentTyping(false);
+    setSocketConnected(false);
+    setUploadError(null);
+    setProfileError(null);
+    setStatus("ready");
+    postToParent({ type: "sm-webchat:unread", count: 0 });
+  }, [org, postToParent]);
+
   const requestClose = useCallback(() => {
     postToParent({ type: "sm-webchat:close" });
   }, [postToParent]);
+
+  const startIdentifiedConversation = useCallback(async (event: FormEvent) => {
+    event.preventDefault();
+    const name = profile.name.trim();
+    const phone = normalizeBrazilPhone(profile.phone);
+    if (!name) {
+      setProfileError("Informe seu nome para continuar.");
+      return;
+    }
+    if (!phone) {
+      setProfileError("Informe um telefone celular válido com DDD.");
+      return;
+    }
+    setProfileError(null);
+    setSending(true);
+    try {
+      await ensureSession();
+    } catch (error) {
+      if (error instanceof HttpError && error.status === 409) {
+        setProfileError("Encontramos mais de um cadastro com este telefone. Peça à equipe para unificar o cadastro antes de continuar, assim seu histórico fica em um só lugar.");
+      } else {
+        setProfileError("Não foi possível iniciar seu atendimento. Tente novamente.");
+      }
+    } finally {
+      setSending(false);
+    }
+  }, [ensureSession, profile]);
 
   // ------------------------------------------------------------------ views
   const orgInitial = orgName.charAt(0).toUpperCase() || "?";
@@ -887,6 +979,17 @@ export function WidgetChat({ org, parentOrigin }: { org: string; parentOrigin: s
         >
           {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
         </button>
+        {session && messages.length > 0 ? (
+          <button
+            type="button"
+            onClick={startNewConversation}
+            className="rounded-full p-2 text-white/80 transition-colors hover:bg-white/15 hover:text-white"
+            aria-label="Iniciar nova conversa"
+            title="Nova conversa"
+          >
+            <RefreshCw className="h-4 w-4" />
+          </button>
+        ) : null}
         {embedded ? (
           <button
             type="button"
@@ -925,6 +1028,55 @@ export function WidgetChat({ org, parentOrigin }: { org: string; parentOrigin: s
               <span className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-transparent" />
               <p className="text-xs text-muted-foreground">Carregando conversa…</p>
             </div>
+          ) : !session ? (
+            <div className="flex h-full flex-col justify-center px-3 py-5">
+              <div className="mx-auto w-full max-w-sm rounded-2xl border border-border bg-card p-5 shadow-soft">
+                <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-full bg-accent">
+                  <MessageCircle className="h-5 w-5 text-accent-foreground" aria-hidden />
+                </div>
+                <h1 className="text-base font-semibold">Vamos começar seu atendimento</h1>
+                <p className="mt-1.5 text-sm leading-5 text-muted-foreground">
+                  Informe seus dados para manter esta conversa vinculada ao seu cadastro e ao mesmo histórico no CRM.
+                </p>
+                <form onSubmit={startIdentifiedConversation} className="mt-5 space-y-3">
+                  <label className="block text-sm font-medium" htmlFor="webchat-name">
+                    Seu nome
+                  </label>
+                  <input
+                    id="webchat-name"
+                    value={profile.name}
+                    onChange={(event) => setProfile((current) => ({ ...current, name: event.target.value }))}
+                    autoComplete="name"
+                    maxLength={160}
+                    className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm outline-none transition-colors focus:border-ring"
+                  />
+                  <label className="block text-sm font-medium" htmlFor="webchat-phone">
+                    Telefone com DDD
+                  </label>
+                  <input
+                    id="webchat-phone"
+                    value={profile.phone}
+                    onChange={(event) => setProfile((current) => ({ ...current, phone: event.target.value }))}
+                    autoComplete="tel"
+                    inputMode="tel"
+                    placeholder="(65) 99999-9999"
+                    maxLength={24}
+                    className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm outline-none transition-colors focus:border-ring"
+                  />
+                  {profileError ? <p className="text-sm text-status-failed">{profileError}</p> : null}
+                  <button
+                    type="submit"
+                    disabled={sending}
+                    className="inline-flex h-11 w-full items-center justify-center rounded-xl bg-brand-gradient px-4 text-sm font-medium text-white shadow-soft disabled:opacity-50"
+                  >
+                    {sending ? <Loader2 className="h-4 w-4 animate-spin" aria-label="Iniciando atendimento" /> : "Iniciar atendimento"}
+                  </button>
+                </form>
+                <p className="mt-3 text-xs leading-4 text-muted-foreground">
+                  Seu telefone identifica o contato; informações da conta só são consultadas após a validação necessária.
+                </p>
+              </div>
+            </div>
           ) : messages.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center">
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-accent">
@@ -936,7 +1088,7 @@ export function WidgetChat({ org, parentOrigin }: { org: string; parentOrigin: s
               </p>
             </div>
           ) : (
-            messages.map((message) => {
+            messages.filter((message) => message.content.hiddenFromVisitor !== true).map((message) => {
               const own = message.direction === "INBOUND";
               const authorLabel = own
                 ? null
@@ -1007,7 +1159,7 @@ export function WidgetChat({ org, parentOrigin }: { org: string; parentOrigin: s
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            disabled={status !== "ready" || uploading}
+            disabled={status !== "ready" || uploading || !session}
             aria-label="Enviar arquivo"
             title="Enviar arquivo"
             className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted disabled:opacity-40"
@@ -1032,13 +1184,13 @@ export function WidgetChat({ org, parentOrigin }: { org: string; parentOrigin: s
             rows={1}
             maxLength={4096}
             placeholder="Escreva sua mensagem…"
-            disabled={status !== "ready"}
+            disabled={status !== "ready" || !session}
             aria-label="Mensagem"
             className="max-h-28 min-h-[40px] flex-1 resize-none rounded-xl border border-input bg-background px-3 py-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-ring disabled:opacity-60"
           />
           <button
             type="submit"
-            disabled={status !== "ready" || input.trim().length === 0 || sending}
+            disabled={status !== "ready" || !session || input.trim().length === 0 || sending}
             aria-label="Enviar mensagem"
             className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-gradient text-white shadow-soft transition-transform hover:scale-105 disabled:opacity-40 disabled:hover:scale-100"
           >

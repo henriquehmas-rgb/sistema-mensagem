@@ -1,11 +1,20 @@
 "use client";
 
-import { Check, PanelRightClose, PanelRightOpen, RotateCcw, Sparkles } from "lucide-react";
+import { useState } from "react";
+import { Check, Loader2, PanelRightClose, PanelRightOpen, RotateCcw, Sparkles, UserPlus } from "lucide-react";
 
 import type { ConversationDto } from "@sm/shared";
 
 import { UserAvatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -14,13 +23,21 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useAgents, useStages, useUpdateConversation } from "@/lib/inbox/hooks";
+import {
+  useAgents,
+  useClaimConversation,
+  useResolutionReasons,
+  useStages,
+  useUpdateConversation,
+} from "@/lib/inbox/hooks";
 import { useInboxStore } from "@/lib/stores/inbox";
+import { useAuthStore } from "@/lib/stores/auth";
 import { cn } from "@/lib/utils";
 
 import { CHANNEL_LABELS, ChannelIcon } from "./channel-icons";
@@ -32,20 +49,27 @@ interface ThreadHeaderProps {
 }
 
 export function ThreadHeader({ conversation }: ThreadHeaderProps) {
+  const [resolutionOpen, setResolutionOpen] = useState(false);
+  const [resolutionReasonId, setResolutionReasonId] = useState("");
+  const [resolutionNote, setResolutionNote] = useState("");
   const agentsQuery = useAgents();
   const stagesQuery = useStages();
+  const resolutionReasonsQuery = useResolutionReasons();
   const updateConversation = useUpdateConversation(conversation.id);
+  const claimConversation = useClaimConversation(conversation.id);
+  const currentUser = useAuthStore((state) => state.user);
 
   const crmOpen = useInboxStore((state) => state.crmOpen);
   const toggleCrm = useInboxStore((state) => state.toggleCrm);
 
   const agents = agentsQuery.data ?? [];
   const stages = stagesQuery.data ?? [];
+  const resolutionReasons = resolutionReasonsQuery.data ?? [];
   const isResolved = conversation.status === "RESOLVED";
   const currentStage = stages.find((stage) => stage.id === conversation.stageId);
 
   return (
-    <header className="flex h-14 shrink-0 items-center gap-3 border-b bg-card/60 px-4">
+    <header className="flex h-14 shrink-0 items-center gap-3 overflow-x-auto border-b bg-card/60 px-4">
       {/* Contato + canal */}
       <div className="flex min-w-0 flex-1 items-center gap-2.5">
         <UserAvatar
@@ -69,8 +93,20 @@ export function ThreadHeader({ conversation }: ThreadHeaderProps) {
 
       {/* Ações */}
       <div className="flex shrink-0 items-center gap-2">
+        {!conversation.assigneeId && !isResolved ? (
+          <Button
+            type="button"
+            size="sm"
+            className="h-8"
+            disabled={claimConversation.isPending}
+            onClick={() => claimConversation.mutate()}
+          >
+            {claimConversation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+            Assumir atendimento
+          </Button>
+        ) : null}
         {/* Responsável */}
-        <Select
+        {currentUser?.role !== "AGENT" ? <Select
           value={conversation.assigneeId ?? NONE_VALUE}
           onValueChange={(value) =>
             updateConversation.mutate({
@@ -101,7 +137,12 @@ export function ThreadHeader({ conversation }: ThreadHeaderProps) {
               </SelectItem>
             ))}
           </SelectContent>
-        </Select>
+        </Select> : conversation.assignee ? (
+          <span className="flex h-8 items-center gap-2 rounded-md border px-2 text-xs">
+            <UserAvatar name={conversation.assignee.name} src={conversation.assignee.avatarUrl} className="h-5 w-5 text-[8px]" />
+            {conversation.assignee.name}
+          </span>
+        ) : null}
 
         {/* Etapa (colorida) */}
         <Select
@@ -167,6 +208,9 @@ export function ThreadHeader({ conversation }: ThreadHeaderProps) {
                 aria-label="Respostas automáticas por IA"
                 className="scale-90"
               />
+              <span className="whitespace-nowrap text-[11px] font-medium">
+                {conversation.aiEnabled ? "IA ativa" : "IA pausada"}
+              </span>
             </label>
           </TooltipTrigger>
           <TooltipContent side="bottom" className="max-w-56 text-center">
@@ -182,9 +226,13 @@ export function ThreadHeader({ conversation }: ThreadHeaderProps) {
           size="sm"
           className="h-8"
           disabled={updateConversation.isPending}
-          onClick={() =>
-            updateConversation.mutate({ status: isResolved ? "OPEN" : "RESOLVED" })
-          }
+          onClick={() => {
+            if (isResolved) {
+              updateConversation.mutate({ status: "OPEN" });
+            } else {
+              setResolutionOpen(true);
+            }
+          }}
         >
           {isResolved ? (
             <>
@@ -204,8 +252,8 @@ export function ThreadHeader({ conversation }: ThreadHeaderProps) {
           <TooltipTrigger asChild>
             <Button
               variant="ghost"
-              size="icon"
-              className="h-8 w-8 text-muted-foreground"
+              size="sm"
+              className="h-8 gap-1.5 text-muted-foreground"
               onClick={toggleCrm}
               aria-label={crmOpen ? "Fechar painel do contato" : "Abrir painel do contato"}
             >
@@ -214,6 +262,7 @@ export function ThreadHeader({ conversation }: ThreadHeaderProps) {
               ) : (
                 <PanelRightOpen className="h-4 w-4" />
               )}
+              Detalhes
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom">
@@ -221,6 +270,74 @@ export function ThreadHeader({ conversation }: ThreadHeaderProps) {
           </TooltipContent>
         </Tooltip>
       </div>
+
+      <Dialog open={resolutionOpen} onOpenChange={setResolutionOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Encerrar atendimento</DialogTitle>
+            <DialogDescription>
+              O motivo ficará registrado no protocolo {conversation.protocol} para auditoria.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="resolution-reason">
+                Motivo do encerramento
+              </label>
+              <Select value={resolutionReasonId} onValueChange={setResolutionReasonId}>
+                <SelectTrigger id="resolution-reason">
+                  <SelectValue placeholder="Selecione um motivo" />
+                </SelectTrigger>
+                <SelectContent>
+                  {resolutionReasons.map((reason) => (
+                    <SelectItem key={reason.id} value={reason.id}>
+                      {reason.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="resolution-note">
+                Observação (opcional)
+              </label>
+              <Textarea
+                id="resolution-note"
+                value={resolutionNote}
+                maxLength={1000}
+                onChange={(event) => setResolutionNote(event.target.value)}
+                placeholder="Registre informações úteis para consultas futuras."
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setResolutionOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              disabled={!resolutionReasonId || updateConversation.isPending}
+              onClick={() =>
+                updateConversation.mutate(
+                  {
+                    status: "RESOLVED",
+                    resolutionReasonId,
+                    resolutionNote: resolutionNote.trim() || null,
+                  },
+                  {
+                    onSuccess: () => {
+                      setResolutionOpen(false);
+                      setResolutionReasonId("");
+                      setResolutionNote("");
+                    },
+                  },
+                )
+              }
+            >
+              Confirmar encerramento
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </header>
   );
 }

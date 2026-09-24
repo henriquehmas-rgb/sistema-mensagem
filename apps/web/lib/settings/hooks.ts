@@ -23,40 +23,109 @@ import {
   createAutomation,
   createChannel,
   createKnowledgeSource,
+  approveLearningCandidate,
   createStage,
   createUser,
+  configureIxc,
+  configureOlhoDeDeus,
   deleteAutomation,
   deleteKnowledgeSource,
   deleteStage,
   deleteTag,
+  dismissKnowledgeGap,
   listAutomations,
   listChannels,
   listChannelTemplates,
   listKnowledgeSources,
+  listKnowledgeGaps,
+  listLearningCandidates,
+  listLearningPatterns,
   listUsers,
+  getIxcConfiguration,
+  getIxcAutoViabilityRuntimeConfiguration,
+  getOlhoDeDeusConfiguration,
   reorderStages,
+  rejectLearningCandidate,
   syncChannelTemplates,
+  testIxc,
+  testOlhoDeDeus,
   updateAutomation,
   updateChannel,
   updateStage,
   updateTag,
   updateUser,
+  answerKnowledgeGap,
+  configureFollowUpResponsible,
+  getFollowUpConfiguration,
   type CreateStageInput,
+  type ConfigureIxcInput,
+  type ConfigureOlhoDeDeusInput,
   type InviteUserInput,
   type UpdateChannelInput,
   type UpdateStageInput,
   type UpdateUserInput,
   type UpsertTagInput,
+  type KnowledgeGapStatus,
+  type KnowledgeGapDto,
+  type FollowUpConfigurationDto,
 } from "./api";
 
 export const settingsKeys = {
   users: ["users", "list"] as const,
+  followUp: ["follow-ups", "configuration"] as const,
   channels: ["channels"] as const,
+  ixc: ["integrations", "ixc"] as const,
+  ixcAutoViability: ["integrations", "ixc", "inmap", "runtime-configuration"] as const,
+  olhoDeDeus: ["integrations", "olho-de-deus"] as const,
   knowledge: ["knowledge"] as const,
+  learningCandidates: ["knowledge", "learning-candidates"] as const,
+  learningPatterns: ["knowledge", "learning-patterns"] as const,
+  knowledgeGaps: (status?: KnowledgeGapStatus) => ["knowledge-gaps", status ?? "all"] as const,
   automations: ["automations"] as const,
   templates: (channelId: string, status?: TemplateStatus) =>
     ["channels", channelId, "templates", status ?? "all"] as const,
 };
+
+export function useKnowledgeGaps(status?: KnowledgeGapStatus, enabled = true) {
+  return useQuery({
+    queryKey: settingsKeys.knowledgeGaps(status),
+    queryFn: () => listKnowledgeGaps(status),
+    refetchInterval: status === "PENDING" ? 15_000 : false,
+    enabled,
+  });
+}
+
+export function useAnswerKnowledgeGap() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, answer }: { id: string; answer: string }) => answerKnowledgeGap(id, answer),
+    onSuccess: (answered) => {
+      toast.success("Orientação enviada. A IA continuará o atendimento.");
+      queryClient.setQueryData<KnowledgeGapDto[]>(
+        settingsKeys.knowledgeGaps("PENDING"),
+        (current) => current?.filter((gap) => gap.id !== answered.id) ?? [],
+      );
+      void queryClient.invalidateQueries({ queryKey: ["knowledge-gaps"] });
+    },
+    onError: (error) => toast.error(errorMessageOf(error)),
+  });
+}
+
+export function useDismissKnowledgeGap() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, note }: { id: string; note: string }) => dismissKnowledgeGap(id, note),
+    onSuccess: (dismissed) => {
+      toast.success("Dúvida descartada com justificativa. O cliente não foi acionado.");
+      queryClient.setQueryData<KnowledgeGapDto[]>(
+        settingsKeys.knowledgeGaps("PENDING"),
+        (current) => current?.filter((gap) => gap.id !== dismissed.id) ?? [],
+      );
+      void queryClient.invalidateQueries({ queryKey: ["knowledge-gaps"] });
+    },
+    onError: (error) => toast.error(errorMessageOf(error)),
+  });
+}
 
 function errorMessageOf(error: unknown): string {
   return error instanceof ApiError
@@ -218,6 +287,28 @@ export function useUsers(enabled: boolean) {
   });
 }
 
+export function useFollowUpConfiguration(enabled: boolean) {
+  return useQuery({
+    queryKey: settingsKeys.followUp,
+    queryFn: getFollowUpConfiguration,
+    enabled,
+    staleTime: 30_000,
+  });
+}
+
+export function useConfigureFollowUpResponsible() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (responsibleUserId: string | null): Promise<FollowUpConfigurationDto> =>
+      configureFollowUpResponsible(responsibleUserId),
+    onSuccess: () => {
+      toast.success("Responsável do follow-up atualizado.");
+      void queryClient.invalidateQueries({ queryKey: settingsKeys.followUp });
+    },
+    onError: (error) => toast.error(errorMessageOf(error)),
+  });
+}
+
 export function useInviteUser() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -277,6 +368,82 @@ export function useUpdateChannel() {
       updateChannel(id, input),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: settingsKeys.channels });
+    },
+    onError: (error) => toast.error(errorMessageOf(error)),
+  });
+}
+
+export function useIxcConfiguration(enabled: boolean) {
+  return useQuery({
+    queryKey: settingsKeys.ixc,
+    queryFn: getIxcConfiguration,
+    enabled,
+    staleTime: 60_000,
+  });
+}
+
+export function useIxcAutoViabilityRuntimeConfiguration(enabled: boolean) {
+  return useQuery({
+    queryKey: settingsKeys.ixcAutoViability,
+    queryFn: getIxcAutoViabilityRuntimeConfiguration,
+    enabled,
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
+export function useConfigureIxc() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ConfigureIxcInput) => configureIxc(input),
+    onSuccess: () => {
+      toast.success("Configuração IXC salva com segurança.");
+      void queryClient.invalidateQueries({ queryKey: settingsKeys.ixc });
+    },
+    onError: (error) => toast.error(errorMessageOf(error)),
+  });
+}
+
+export function useTestIxc() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: testIxc,
+    onSuccess: () => {
+      toast.success("Conexão com o IXC validada.");
+      void queryClient.invalidateQueries({ queryKey: settingsKeys.ixc });
+    },
+    onError: (error) => toast.error(errorMessageOf(error)),
+  });
+}
+
+export function useOlhoDeDeusConfiguration(enabled: boolean) {
+  return useQuery({
+    queryKey: settingsKeys.olhoDeDeus,
+    queryFn: getOlhoDeDeusConfiguration,
+    enabled,
+    staleTime: 60_000,
+  });
+}
+
+export function useConfigureOlhoDeDeus() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ConfigureOlhoDeDeusInput) => configureOlhoDeDeus(input),
+    onSuccess: () => {
+      toast.success("Configuração do Olho de Deus salva com segurança.");
+      void queryClient.invalidateQueries({ queryKey: settingsKeys.olhoDeDeus });
+    },
+    onError: (error) => toast.error(errorMessageOf(error)),
+  });
+}
+
+export function useTestOlhoDeDeus() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: testOlhoDeDeus,
+    onSuccess: () => {
+      toast.success("Leitura do Olho de Deus validada.");
+      void queryClient.invalidateQueries({ queryKey: settingsKeys.olhoDeDeus });
     },
     onError: (error) => toast.error(errorMessageOf(error)),
   });
@@ -387,6 +554,49 @@ export function useDeleteKnowledgeSource() {
     onSuccess: () => {
       toast.success("Fonte removida da base de conhecimento.");
       void queryClient.invalidateQueries({ queryKey: settingsKeys.knowledge });
+    },
+    onError: (error) => toast.error(errorMessageOf(error)),
+  });
+}
+
+export function useLearningCandidates(enabled = true) {
+  return useQuery({
+    queryKey: settingsKeys.learningCandidates,
+    queryFn: listLearningCandidates,
+    enabled,
+    staleTime: 15_000,
+  });
+}
+
+export function useLearningPatterns(enabled = true) {
+  return useQuery({
+    queryKey: settingsKeys.learningPatterns,
+    queryFn: listLearningPatterns,
+    enabled,
+    staleTime: 60_000,
+  });
+}
+
+export function useApproveLearningCandidate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => approveLearningCandidate(id),
+    onSuccess: () => {
+      toast.success("Solução aprovada para o repertório da IA.");
+      void queryClient.invalidateQueries({ queryKey: settingsKeys.learningCandidates });
+      void queryClient.invalidateQueries({ queryKey: settingsKeys.knowledge });
+    },
+    onError: (error) => toast.error(errorMessageOf(error)),
+  });
+}
+
+export function useRejectLearningCandidate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => rejectLearningCandidate(id),
+    onSuccess: () => {
+      toast.success("Sugestão descartada.");
+      void queryClient.invalidateQueries({ queryKey: settingsKeys.learningCandidates });
     },
     onError: (error) => toast.error(errorMessageOf(error)),
   });

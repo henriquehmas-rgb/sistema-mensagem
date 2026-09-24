@@ -36,6 +36,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useAuthStore } from "@/lib/stores/auth";
+import { useDepartments } from "@/lib/inbox/hooks";
 import { useInviteUser, useUpdateUser, useUsers } from "@/lib/settings/hooks";
 
 const ROLE_LABELS: Record<Role, string> = {
@@ -65,12 +66,14 @@ interface InviteDialogProps {
 
 function InviteDialog({ open, onOpenChange }: InviteDialogProps) {
   const inviteUser = useInviteUser();
+  const departments = useDepartments().data ?? [];
 
   const [form, setForm] = useState({
     name: "",
     email: "",
     password: generateTemporaryPassword(),
     role: "AGENT" as Role,
+    departmentId: "",
   });
   const [showPassword, setShowPassword] = useState(false);
 
@@ -78,6 +81,7 @@ function InviteDialog({ open, onOpenChange }: InviteDialogProps) {
     form.name.trim().length > 0 &&
     form.email.trim().length > 0 &&
     form.password.length >= 8 &&
+    (form.role !== "AGENT" || form.departmentId.length > 0) &&
     !inviteUser.isPending;
 
   const handleSubmit = (event: React.FormEvent): void => {
@@ -89,6 +93,7 @@ function InviteDialog({ open, onOpenChange }: InviteDialogProps) {
         email: form.email.trim().toLowerCase(),
         password: form.password,
         role: form.role,
+        departmentId: form.role === "AGENT" ? form.departmentId : undefined,
       },
       {
         onSuccess: () => {
@@ -97,6 +102,7 @@ function InviteDialog({ open, onOpenChange }: InviteDialogProps) {
             email: "",
             password: generateTemporaryPassword(),
             role: "AGENT",
+            departmentId: "",
           });
           onOpenChange(false);
         },
@@ -209,6 +215,30 @@ function InviteDialog({ open, onOpenChange }: InviteDialogProps) {
             </Select>
           </div>
 
+          {form.role === "AGENT" ? (
+            <div className="space-y-1.5">
+              <Label>Setor *</Label>
+              <Select
+                value={form.departmentId}
+                onValueChange={(departmentId) =>
+                  setForm((current) => ({ ...current, departmentId }))
+                }
+              >
+                <SelectTrigger><SelectValue placeholder="Selecione o setor" /></SelectTrigger>
+                <SelectContent>
+                  {departments.filter((department) => department.isActive).map((department) => (
+                    <SelectItem key={department.id} value={department.id}>
+                      {department.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                O atendente verá somente os casos deste setor.
+              </p>
+            </div>
+          ) : null}
+
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               Cancelar
@@ -236,6 +266,7 @@ export function UsersSettings() {
 
   const usersQuery = useUsers(isAdmin);
   const updateUser = useUpdateUser();
+  const departments = useDepartments().data ?? [];
 
   const [dialogOpen, setDialogOpen] = useState(false);
 
@@ -270,6 +301,7 @@ export function UsersSettings() {
             <TableRow>
               <TableHead>Usuário</TableHead>
               <TableHead>Papel</TableHead>
+              <TableHead>Setor</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Ativo</TableHead>
             </TableRow>
@@ -290,6 +322,7 @@ export function UsersSettings() {
                   <TableCell>
                     <Skeleton className="h-4 w-20" />
                   </TableCell>
+                  <TableCell><Skeleton className="h-4 w-24" /></TableCell>
                   <TableCell>
                     <Skeleton className="h-4 w-14" />
                   </TableCell>
@@ -300,7 +333,7 @@ export function UsersSettings() {
               ))
             ) : users.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={4} className="h-24 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={5} className="h-24 text-center text-sm text-muted-foreground">
                   Nenhum usuário encontrado.
                 </TableCell>
               </TableRow>
@@ -333,6 +366,25 @@ export function UsersSettings() {
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {ROLE_LABELS[user.role]}
+                    </TableCell>
+                    <TableCell className="min-w-36">
+                      {user.role === "AGENT" ? (
+                        <Select
+                          value={user.departmentId ?? "__none__"}
+                          onValueChange={(departmentId) => updateUser.mutate({ id: user.id, input: { departmentId } })}
+                          disabled={updateUser.isPending}
+                        >
+                          <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Definir setor" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__" disabled>Defina um setor</SelectItem>
+                            {departments.filter((department) => department.isActive).map((department) => (
+                              <SelectItem key={department.id} value={department.id}>{department.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">Todos os setores</span>
+                      )}
                     </TableCell>
                     <TableCell>
                       {user.isActive ? (

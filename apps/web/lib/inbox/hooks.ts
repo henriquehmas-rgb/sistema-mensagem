@@ -17,18 +17,23 @@ import { ApiError } from "@/lib/api";
 import { useAuthStore } from "@/lib/stores/auth";
 import {
   addConversationTag,
+  claimConversation,
   createTag,
   fetchConversationCounts,
+  getIxcCustomerDetails,
   getConversation,
   listAgents,
   listContactConversations,
+  listDepartments,
   listConversations,
   listMessages,
+  listResolutionReasons,
   listStages,
   listTags,
   markConversationRead,
   removeConversationTag,
   sendMessage,
+  searchIxcCustomerByPhone,
   updateContact,
   updateConversation,
   type SendMessageInput,
@@ -93,6 +98,14 @@ export function useConversation(id: string | null) {
   });
 }
 
+export function useDepartments() {
+  return useQuery({
+    queryKey: inboxKeys.departments,
+    queryFn: listDepartments,
+    staleTime: 60_000,
+  });
+}
+
 export function useUpdateConversation(conversationId: string) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -119,6 +132,22 @@ export function useUpdateConversation(conversationId: string) {
       void queryClient.invalidateQueries({
         queryKey: inboxKeys.conversationCountsAll,
       });
+    },
+  });
+}
+
+export function useClaimConversation(conversationId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => claimConversation(conversationId),
+    onSuccess: (conversation) => {
+      upsertConversationInCaches(queryClient, conversation);
+      void queryClient.invalidateQueries({ queryKey: inboxKeys.conversationCountsAll });
+      toast.success('Atendimento assumido por você');
+    },
+    onError: (error) => {
+      toast.error(errorMessageOf(error));
+      void queryClient.invalidateQueries({ queryKey: inboxKeys.conversations });
     },
   });
 }
@@ -311,6 +340,14 @@ export function useTags() {
   });
 }
 
+export function useResolutionReasons() {
+  return useQuery({
+    queryKey: inboxKeys.resolutionReasons,
+    queryFn: listResolutionReasons,
+    staleTime: 5 * 60_000,
+  });
+}
+
 export function useCreateTag() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -339,6 +376,21 @@ export function useUpdateContact() {
     onSuccess: (contact: ContactDto) => {
       patchContactInCaches(queryClient, contact);
     },
+    onError: (error) => toast.error(errorMessageOf(error)),
+  });
+}
+
+export function useIxcCustomerLookup() {
+  return useMutation({
+    mutationFn: (phone: string) => searchIxcCustomerByPhone(phone),
+    onError: (error) => toast.error(errorMessageOf(error)),
+  });
+}
+
+export function useIxcCustomerDetails() {
+  return useMutation({
+    mutationFn: ({ customerId, conversationId, includeInvoices }: { customerId: string; conversationId: string; includeInvoices: boolean }) =>
+      getIxcCustomerDetails(customerId, conversationId, includeInvoices),
     onError: (error) => toast.error(errorMessageOf(error)),
   });
 }

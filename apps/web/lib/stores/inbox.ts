@@ -25,7 +25,11 @@ interface InboxUiState {
 
 const INITIAL_STATE = {
   activeConversationId: null,
-  crmOpen: true,
+  // A thread é a área principal da Inbox. Manter o CRM recolhido evita uma
+  // terceira coluna vazia e deixa a leitura/conversa usar toda a largura; o
+  // atendente abre “Detalhes” somente quando precisar consultar ou editar o
+  // contato.
+  crmOpen: false,
   typingByConversation: {},
 } satisfies Pick<
   InboxUiState,

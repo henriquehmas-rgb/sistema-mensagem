@@ -2,12 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ExternalLink, Loader2 } from "lucide-react";
+import { ExternalLink, GitMerge, Loader2 } from "lucide-react";
 
 import type { ContactDto } from "@sm/shared";
 
 import { UserAvatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
@@ -20,10 +23,11 @@ import {
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { useContact, useUpdateContactProfile } from "@/lib/contacts/hooks";
+import { useContact, useContacts, useMergeContacts, useUpdateContactProfile } from "@/lib/contacts/hooks";
 import { useContactConversations } from "@/lib/inbox/hooks";
 import { formatFullDate, formatRelativeShort } from "@/lib/inbox/utils";
 import { useInboxStore } from "@/lib/stores/inbox";
+import { useAuthStore } from "@/lib/stores/auth";
 import { cn } from "@/lib/utils";
 
 import {
@@ -65,6 +69,12 @@ export function ContactSheet({ contactId, onClose }: ContactSheetProps) {
   const contactQuery = useContact(contactId);
   const conversationsQuery = useContactConversations(contactId);
   const updateContact = useUpdateContactProfile();
+  const mergeContact = useMergeContacts();
+  const user = useAuthStore((state) => state.user);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [mergeSearch, setMergeSearch] = useState("");
+  const [sourceContactId, setSourceContactId] = useState<string | null>(null);
+  const mergeCandidatesQuery = useContacts({ q: mergeSearch, page: 1 });
 
   const contact = contactQuery.data ?? null;
 
@@ -106,6 +116,17 @@ export function ContactSheet({ contactId, onClose }: ContactSheetProps) {
   };
 
   const conversations = conversationsQuery.data ?? [];
+  const canMerge = user?.role === "ADMIN" || user?.role === "SUPERVISOR";
+  const mergeCandidates = (mergeCandidatesQuery.data?.data ?? []).filter((candidate) => candidate.id !== contact?.id);
+  const sourceContact = mergeCandidates.find((candidate) => candidate.id === sourceContactId) ?? null;
+
+  const confirmMerge = async (): Promise<void> => {
+    if (!contact || !sourceContactId) return;
+    await mergeContact.mutateAsync({ targetContactId: contact.id, sourceContactId });
+    setMergeOpen(false);
+    setMergeSearch("");
+    setSourceContactId(null);
+  };
 
   return (
     <Sheet open={contactId !== null} onOpenChange={(open) => !open && onClose()}>
@@ -210,6 +231,18 @@ export function ContactSheet({ contactId, onClose }: ContactSheetProps) {
                 />
               </div>
             </div>
+            {canMerge ? (
+              <Button
+                size="sm"
+                variant="outline"
+                type="button"
+                onClick={() => setMergeOpen(true)}
+                disabled={!contact}
+              >
+                <GitMerge className="h-4 w-4" />
+                Unificar registro
+              </Button>
+            ) : null}
             <Button
               size="sm"
               disabled={!isDirty || updateContact.isPending}
@@ -279,6 +312,68 @@ export function ContactSheet({ contactId, onClose }: ContactSheetProps) {
           </div>
         </div>
       </SheetContent>
+      <Dialog open={mergeOpen} onOpenChange={(open) => {
+        setMergeOpen(open);
+        if (!open) {
+          setMergeSearch("");
+          setSourceContactId(null);
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Unificar registros de contato</DialogTitle>
+            <DialogDescription>
+              Escolha o registro duplicado que pertence à mesma pessoa. As conversas e identidades dele serão movidas para {contact?.name || "este contato"}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="merge-contact-search">Buscar por nome ou telefone</Label>
+              <Input
+                id="merge-contact-search"
+                value={mergeSearch}
+                onChange={(event) => {
+                  setMergeSearch(event.target.value);
+                  setSourceContactId(null);
+                }}
+                placeholder="Digite ao menos parte do nome ou telefone"
+              />
+            </div>
+            {mergeSearch.trim().length < 2 ? (
+              <p className="text-xs text-muted-foreground">Pesquise o outro registro e confira os dados antes de unificar.</p>
+            ) : mergeCandidatesQuery.isLoading ? (
+              <div className="space-y-2"><Skeleton className="h-12 w-full" /><Skeleton className="h-12 w-full" /></div>
+            ) : mergeCandidates.length === 0 ? (
+              <p className="text-xs text-muted-foreground">Nenhum outro contato encontrado.</p>
+            ) : (
+              <div className="max-h-48 space-y-1 overflow-y-auto rounded-md border p-1">
+                {mergeCandidates.map((candidate) => (
+                  <button
+                    key={candidate.id}
+                    type="button"
+                    onClick={() => setSourceContactId(candidate.id)}
+                    className={cn(
+                      "flex w-full items-center justify-between rounded px-3 py-2 text-left text-sm hover:bg-accent",
+                      sourceContactId === candidate.id && "bg-primary/10 ring-1 ring-primary/30",
+                    )}
+                  >
+                    <span className="min-w-0"><span className="block truncate font-medium">{candidate.name}</span><span className="block truncate text-xs text-muted-foreground">{candidate.phone || candidate.email || "Sem telefone/e-mail"}</span></span>
+                    {sourceContactId === candidate.id ? <span className="text-xs font-medium text-primary">Selecionado</span> : null}
+                  </button>
+                ))}
+              </div>
+            )}
+            {sourceContact ? <p className="rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">Confirme somente após verificar que “{sourceContact.name}” é a mesma pessoa. Duas conversas abertas no mesmo canal não serão unificadas.</p> : null}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMergeOpen(false)}>Cancelar</Button>
+            <Button disabled={!sourceContact || mergeContact.isPending} onClick={() => void confirmMerge()}>
+              {mergeContact.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <GitMerge className="h-4 w-4" />}
+              Unificar com segurança
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Sheet>
   );
 }

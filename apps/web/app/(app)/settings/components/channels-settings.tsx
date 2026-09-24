@@ -108,8 +108,6 @@ function MetaChannelForm({ type, onDone }: ChannelFormProps & { type: Extract<Ch
     wabaId: "",
     igBusinessId: "",
     accessToken: "",
-    verifyToken: "",
-    appSecret: "",
   });
 
   const setField = (field: keyof typeof form) =>
@@ -119,8 +117,6 @@ function MetaChannelForm({ type, onDone }: ChannelFormProps & { type: Extract<Ch
   const requiredFilled =
     form.name.trim().length > 0 &&
     form.accessToken.trim().length > 0 &&
-    form.appSecret.trim().length > 0 &&
-    form.verifyToken.trim().length > 0 &&
     (isWhatsApp
       ? form.phoneNumberId.trim().length > 0 && form.wabaId.trim().length > 0
       : form.igBusinessId.trim().length > 0);
@@ -132,10 +128,12 @@ function MetaChannelForm({ type, onDone }: ChannelFormProps & { type: Extract<Ch
       {
         type,
         name: form.name.trim(),
+        // O backend também deriva esse vínculo como proteção contra clientes
+        // antigos, mas enviá-lo explicitamente documenta que o Phone Number ID
+        // é a chave de roteamento dos webhooks do WhatsApp.
+        ...(isWhatsApp ? { externalId: form.phoneNumberId.trim() } : {}),
         credentials: {
           accessToken: form.accessToken.trim(),
-          appSecret: form.appSecret.trim(),
-          verifyToken: form.verifyToken.trim(),
           ...(isWhatsApp
             ? {
                 phoneNumberId: form.phoneNumberId.trim(),
@@ -221,37 +219,6 @@ function MetaChannelForm({ type, onDone }: ChannelFormProps & { type: Extract<Ch
           required
         />
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div className="space-y-1.5">
-          <Label htmlFor="channel-app-secret" className="text-xs">
-            App Secret *
-          </Label>
-          <Input
-            id="channel-app-secret"
-            type="password"
-            value={form.appSecret}
-            onChange={setField("appSecret")}
-            className="h-9 font-mono text-xs"
-            autoComplete="off"
-            required
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="channel-verify-token" className="text-xs">
-            Verify Token *
-          </Label>
-          <Input
-            id="channel-verify-token"
-            type="password"
-            value={form.verifyToken}
-            onChange={setField("verifyToken")}
-            className="h-9 font-mono text-xs"
-            autoComplete="off"
-            required
-          />
-        </div>
-      </div>
-
       <EncryptionNotice />
       <WebhookUrlField />
 

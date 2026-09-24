@@ -45,3 +45,9 @@ export interface CreateContactInput {
 export function createContact(input: CreateContactInput): Promise<ContactDto> {
   return api.post<ContactDto>("/contacts", { body: input });
 }
+
+export function mergeContacts(targetContactId: string, sourceContactId: string): Promise<ContactDto> {
+  return api.post<ContactDto>("/contacts/" + targetContactId + "/merge", {
+    body: { sourceContactId },
+  });
+}
